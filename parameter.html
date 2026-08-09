@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Seestrasse 52B · Parameter</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">Seestrasse <span>52B</span></div>
+  <nav class="tabs">
+    <a href="index.html">Übersicht</a>
+    <a href="log.html">Log</a>
+    <a href="admin.html">Admin</a>
+    <a href="config.html">Konfiguration</a>
+  </nav>
+</header>
+<main>
+  <div id="msg" class="msg" style="display:none;"></div>
+  <h1 id="title">Parameter</h1>
+  <div style="position:relative;">
+    <div id="chartWrap" class="card"></div>
+  </div>
+
+  <h1 style="margin-top:26px;">Log</h1>
+  <table>
+    <thead><tr><th>Datum</th><th>Wert</th><th>Kommentar</th><th>Quelle</th><th>Erstellt</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="empty" class="empty" style="display:none;">Keine Einträge für diesen Parameter.</div>
+</main>
+
+<dialog id="editDialog">
+  <div class="card">
+    <h2>Eintrag bearbeiten</h2>
+    <input type="hidden" id="e_id">
+    <div class="field"><label>Datum / Zeit</label><input id="e_datum" type="datetime-local"></div>
+    <div class="field"><label>Wert</label><input id="e_value" type="number" step="any"></div>
+    <div class="field"><label>Kommentar</label><input id="e_comment" type="text"></div>
+    <div class="field"><label>Quelle</label><input id="e_source" type="text"></div>
+    <div id="editMsg" class="msg" style="display:none;"></div>
+    <div class="actions">
+      <button class="secondary" id="cancelEdit">Abbrechen</button>
+      <button id="saveEdit">Speichern</button>
+    </div>
+  </div>
+</dialog>
+
+<script src="assets/turso.js"></script>
+<script>
+const msg = document.getElementById('msg');
+const params = new URLSearchParams(location.search);
+const paramId = params.get('id');
+let param = null;
+let rows = [];
+
+function drawChart(data){
+  const wrap = document.getElementById('chartWrap');
+  if(data.length === 0){
+    wrap.innerHTML = '<div class="empty">Keine Daten zum Zeichnen vorhanden.</div>';
+    return;
+  }
+  const w = wrap.clientWidth || 800, h = 280;
+  const padL = 50, padR = 16, padT = 16, padB = 30;
+  const xs = data.map(d => new Date(d.Datum).getTime());
+  const ys = data.map(d => Number(d.Value));
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  const yMin = Math.min(...ys), yMax = Math.max(...ys);
+  const yPad = (yMax - yMin) * 0.1 || 1;
+  const yLo = yMin - yPad, yHi = yMax + yPad;
+
+  const xScale = x => padL + (xMax === xMin ? 0 : (x - xMin) / (xMax - xMin)) * (w - padL - padR);
+  const yScale = y => h - padB - (yHi === yLo ? 0 : (y - yLo) / (yHi - yLo)) * (h - padT - padB);
+
+  const pts = data.map(d => ({ x: xScale(new Date(d.Datum).getTime()), y: yScale(Number(d.Value)), raw: d }));
+  const path = pts.map((p,i) => (i===0?'M':'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
+
+  const gridLines = 4;
+  let gridSvg = '';
+  for(let i=0;i<=gridLines;i++){
+    const y = padT + i*(h-padT-padB)/gridLines;
+    const val = yHi - i*(yHi-yLo)/gridLines;
+    gridSvg += `<line x1="${padL}" y1="${y}" x2="${w-padR}" y2="${y}" stroke="var(--grey-300)" stroke-width="1"/>`;
+    gridSvg += `<text x="${padL-8}" y="${y+4}" text-anchor="end" font-size="10" font-family="IBM Plex Mono" fill="#666">${val.toFixed(1)}</text>`;
+  }
+
+  wrap.innerHTML = `
+    <svg class="chart" viewBox="0 0 ${w} ${h}" id="svgChart">
+      ${gridSvg}
+      <path d="${path}" fill="none" stroke="var(--red)" stroke-width="2"/>
+      <rect id="hitRect" x="${padL}" y="${padT}" width="${w-padL-padR}" height="${h-padT-padB}" fill="transparent"/>
+      <circle id="hoverDot" r="4" fill="var(--red)" style="display:none;"/>
+    </svg>
+  `;
+  const svg = document.getElementById('svgChart');
+  const hitRect = document.getElementById('hitRect');
+  const hoverDot = document.getElementById('hoverDot');
+  let tooltip = wrap.querySelector('.chart-tooltip');
+  if(!tooltip){
+    tooltip = document.createElement('div');
+    tooltip.className = 'chart-tooltip';
+    tooltip.style.display = 'none';
+    wrap.style.position = 'relative';
+    wrap.appendChild(tooltip);
+  }
+
+  function nearest(mx){
+    let best = pts[0], bestDist = Infinity;
+    for(const p of pts){
+      const d = Math.abs(p.x - mx);
+      if(d < bestDist){ bestDist = d; best = p; }
+    }
+    return best;
+  }
+
+  hitRect.addEventListener('mousemove', (ev) => {
+    const rect = svg.getBoundingClientRect();
+    const mx = (ev.clientX - rect.left) * (w / rect.width);
+    const p = nearest(mx);
+    hoverDot.style.display = 'block';
+    hoverDot.setAttribute('cx', p.x); hoverDot.setAttribute('cy', p.y);
+    tooltip.style.display = 'block';
+    tooltip.style.left = ((p.x/w)*rect.width) + 'px';
+    tooltip.style.top = ((p.y/h)*rect.height) + 'px';
+    tooltip.textContent = `${fmtDateTime(p.raw.Datum)} · ${p.raw.Value}${param.Einheit ? ' '+param.Einheit : ''}`;
+  });
+  hitRect.addEventListener('mouseleave', () => {
+    hoverDot.style.display = 'none';
+    tooltip.style.display = 'none';
+  });
+  // Touch support
+  hitRect.addEventListener('touchmove', (ev) => {
+    const t = ev.touches[0];
+    const rect = svg.getBoundingClientRect();
+    const mx = (t.clientX - rect.left) * (w / rect.width);
+    const p = nearest(mx);
+    hoverDot.style.display = 'block';
+    hoverDot.setAttribute('cx', p.x); hoverDot.setAttribute('cy', p.y);
+    tooltip.style.display = 'block';
+    tooltip.style.left = ((p.x/w)*rect.width) + 'px';
+    tooltip.style.top = ((p.y/h)*rect.height) + 'px';
+    tooltip.textContent = `${fmtDateTime(p.raw.Datum)} · ${p.raw.Value}${param.Einheit ? ' '+param.Einheit : ''}`;
+    ev.preventDefault();
+  }, { passive:false });
+}
+
+function renderRows(){
+  document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
+  document.getElementById('rows').innerHTML = rows.map(r => `
+    <tr>
+      <td>${fmtDateTime(r.Datum)}</td>
+      <td class="num">${r.Value === null ? '' : escapeHtml(r.Value)} <span style="color:var(--grey-600);">${escapeHtml(param.Einheit||'')}</span></td>
+      <td>${escapeHtml(r.Comment)}</td>
+      <td>${escapeHtml(r.Source)}</td>
+      <td class="mono" style="font-size:11px;color:var(--grey-600);">${fmtDateTime(r.CreatedAt)}</td>
+      <td style="white-space:nowrap;">
+        <button class="small secondary" onclick="openEdit(${r.LogID})">Bearbeiten</button>
+        <button class="small danger" onclick="deleteRow(${r.LogID})">Löschen</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function load(){
+  if(!paramId){ showMsg(msg, 'Kein Parameter angegeben.', 'err'); return; }
+  const client = getClient();
+  const pRes = await client.execute('SELECT ParameterID, Name, Einheit FROM seestrasse_parameter WHERE ParameterID = ?', [Number(paramId)]);
+  const pObjs = TursoClient.rowsToObjects(pRes);
+  if(pObjs.length === 0){ showMsg(msg, 'Parameter nicht gefunden.', 'err'); return; }
+  param = pObjs[0];
+  document.title = 'Seestrasse 52B · ' + param.Name;
+  document.getElementById('title').textContent = param.Name + (param.Einheit ? ' (' + param.Einheit + ')' : '');
+
+  const lRes = await client.execute('SELECT LogID, Datum, Value, Comment, Source, CreatedAt FROM seestrasse_log WHERE ParameterID = ? ORDER BY Datum ASC', [Number(paramId)]);
+  rows = TursoClient.rowsToObjects(lRes);
+  drawChart(rows.filter(r => r.Value !== null));
+  rows = rows.slice().reverse(); // neueste zuerst in Tabelle
+  renderRows();
+}
+
+const dialog = document.getElementById('editDialog');
+window.openEdit = function(id){
+  const r = rows.find(x => String(x.LogID) === String(id));
+  if(!r) return;
+  document.getElementById('e_id').value = r.LogID;
+  document.getElementById('e_datum').value = isoToLocalInput(r.Datum);
+  document.getElementById('e_value').value = r.Value === null ? '' : r.Value;
+  document.getElementById('e_comment').value = r.Comment || '';
+  document.getElementById('e_source').value = r.Source || '';
+  document.getElementById('editMsg').style.display = 'none';
+  dialog.showModal();
+};
+document.getElementById('cancelEdit').addEventListener('click', () => dialog.close());
+
+document.getElementById('saveEdit').addEventListener('click', async () => {
+  const editMsg = document.getElementById('editMsg');
+  const id = document.getElementById('e_id').value;
+  const datum = localInputToISO(document.getElementById('e_datum').value);
+  const value = document.getElementById('e_value').value;
+  const comment = document.getElementById('e_comment').value;
+  const source = document.getElementById('e_source').value;
+  try{
+    const client = getClient();
+    await client.execute(
+      'UPDATE seestrasse_log SET Datum=?, Value=?, Comment=?, Source=? WHERE LogID=?',
+      [datum, value === '' ? null : Number(value), comment || null, source || null, Number(id)]
+    );
+    dialog.close();
+    await load();
+  }catch(e){
+    showMsg(editMsg, 'Fehler: ' + e.message, 'err');
+  }
+});
+
+window.deleteRow = async function(id){
+  if(!confirm('Diesen Eintrag wirklich löschen?')) return;
+  try{
+    const client = getClient();
+    await client.execute('DELETE FROM seestrasse_log WHERE LogID=?', [Number(id)]);
+    await load();
+  }catch(e){
+    showMsg(msg, 'Fehler beim Löschen: ' + e.message, 'err');
+  }
+};
+
+load().catch(e => showMsg(msg, 'Fehler beim Laden: ' + e.message, 'err'));
+window.addEventListener('resize', () => { if(param) drawChart(rows.filter(r => r.Value !== null).slice().reverse()); });
+</script>
+</body>
+</html>

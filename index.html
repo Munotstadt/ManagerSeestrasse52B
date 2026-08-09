@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Seestrasse 52B · Übersicht</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">Seestrasse <span>52B</span></div>
+  <nav class="tabs">
+    <a href="index.html" class="active">Übersicht</a>
+    <a href="log.html">Log</a>
+    <a href="admin.html">Admin</a>
+    <a href="config.html">Konfiguration</a>
+  </nav>
+</header>
+<main>
+  <h1>Parameter-Übersicht</h1>
+  <div id="msg" class="msg" style="display:none;"></div>
+  <div id="grid" class="grid"></div>
+  <div id="empty" class="empty" style="display:none;">Noch keine aktiven Parameter definiert. <a href="admin.html">Parameter anlegen →</a></div>
+</main>
+<script src="assets/turso.js"></script>
+<script>
+const msg = document.getElementById('msg');
+const grid = document.getElementById('grid');
+
+async function load(){
+  try{
+    const client = getClient();
+    const paramsRes = await client.execute(
+      'SELECT ParameterID, Name, Einheit FROM seestrasse_parameter WHERE Active = 1 ORDER BY Name'
+    );
+    const params = TursoClient.rowsToObjects(paramsRes);
+
+    if(params.length === 0){
+      document.getElementById('empty').style.display = 'block';
+      return;
+    }
+
+    const latestRes = await client.execute(`
+      SELECT l.ParameterID, l.Value, l.Datum
+      FROM seestrasse_log l
+      INNER JOIN (
+        SELECT ParameterID, MAX(Datum) AS MaxDatum
+        FROM seestrasse_log GROUP BY ParameterID
+      ) m ON m.ParameterID = l.ParameterID AND m.MaxDatum = l.Datum
+    `);
+    const latestRows = TursoClient.rowsToObjects(latestRes);
+    const latestByParam = {};
+    latestRows.forEach(r => { latestByParam[r.ParameterID] = r; });
+
+    grid.innerHTML = params.map(p => {
+      const latest = latestByParam[p.ParameterID];
+      const valueHtml = latest
+        ? `<div class="pvalue">${escapeHtml(latest.Value)} <span class="punit">${escapeHtml(p.Einheit||'')}</span></div>
+           <div class="pdate">${fmtDateTime(latest.Datum)}</div>`
+        : `<div class="pvalue mono" style="color:var(--grey-600);font-size:15px;">– keine Daten –</div>`;
+      return `<a class="param-card" href="parameter.html?id=${p.ParameterID}">
+                <div class="pname">${escapeHtml(p.Name)}</div>
+                ${valueHtml}
+              </a>`;
+    }).join('');
+  }catch(e){
+    showMsg(msg, 'Fehler beim Laden: ' + e.message, 'err');
+  }
+}
+load();
+</script>
+</body>
+</html>

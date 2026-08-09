@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Seestrasse 52B · Konfiguration</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">Seestrasse <span>52B</span></div>
+  <nav class="tabs">
+    <a href="index.html">Übersicht</a>
+    <a href="log.html">Log</a>
+    <a href="admin.html">Admin</a>
+    <a href="config.html" class="active">Konfiguration</a>
+  </nav>
+</header>
+<main style="max-width:520px;">
+  <h1>Turso-Verbindung</h1>
+  <p style="color:var(--grey-600);font-size:13px;">Datenbank: <span class="mono">munostadtadtseetstrasse52bdb</span>. Zugangsdaten werden nur lokal in diesem Browser gespeichert (localStorage).</p>
+  <div class="card">
+    <div class="field">
+      <label for="url">Turso HTTP URL</label>
+      <input id="url" type="text" placeholder="https://munostadtadtseetstrasse52bdb-org.turso.io">
+    </div>
+    <div class="field">
+      <label for="token">Auth Token</label>
+      <input id="token" type="password" placeholder="ey...">
+    </div>
+    <div id="msg" class="msg" style="display:none;"></div>
+    <div style="display:flex;gap:8px;">
+      <button id="saveBtn">Speichern</button>
+      <button id="testBtn" class="secondary">Verbindung testen</button>
+    </div>
+  </div>
+</main>
+<script src="assets/turso.js"></script>
+<script>
+const msg = document.getElementById('msg');
+const cfg = getCfg();
+if(cfg){
+  document.getElementById('url').value = cfg.url || '';
+  document.getElementById('token').value = cfg.token || '';
+}
+
+document.getElementById('saveBtn').addEventListener('click', () => {
+  const url = document.getElementById('url').value.trim();
+  const token = document.getElementById('token').value.trim();
+  if(!url || !token){ showMsg(msg, 'Bitte URL und Token angeben.', 'err'); return; }
+  setCfg(url, token);
+  showMsg(msg, 'Gespeichert.', 'ok');
+});
+
+document.getElementById('testBtn').addEventListener('click', async () => {
+  const url = document.getElementById('url').value.trim();
+  const token = document.getElementById('token').value.trim();
+  if(!url || !token){ showMsg(msg, 'Bitte URL und Token angeben.', 'err'); return; }
+  try{
+    const client = new TursoClient(url, token);
+    await client.execute('SELECT 1');
+    showMsg(msg, 'Verbindung erfolgreich.', 'ok');
+  }catch(e){
+    showMsg(msg, 'Fehler: ' + e.message, 'err');
+  }
+});
+</script>
+</body>
+</html>

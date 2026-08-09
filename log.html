@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Seestrasse 52B · Log</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">Seestrasse <span>52B</span></div>
+  <nav class="tabs">
+    <a href="index.html">Übersicht</a>
+    <a href="log.html" class="active">Log</a>
+    <a href="admin.html">Admin</a>
+    <a href="config.html">Konfiguration</a>
+  </nav>
+</header>
+<main>
+  <h1>Neuer Eintrag</h1>
+  <div id="addMsg" class="msg" style="display:none;"></div>
+  <div class="card" style="margin-bottom:26px;">
+    <div class="row">
+      <div class="field">
+        <label for="f_datum">Datum / Zeit</label>
+        <input id="f_datum" type="datetime-local">
+      </div>
+      <div class="field">
+        <label for="f_param">Parameter</label>
+        <select id="f_param"></select>
+      </div>
+      <div class="field">
+        <label for="f_value">Wert</label>
+        <input id="f_value" type="number" step="any">
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="f_comment">Kommentar</label>
+        <input id="f_comment" type="text">
+      </div>
+      <div class="field">
+        <label for="f_source">Quelle</label>
+        <input id="f_source" type="text">
+      </div>
+    </div>
+    <button id="addBtn">Eintrag speichern</button>
+  </div>
+
+  <h1>Log</h1>
+  <div class="search-bar">
+    <input id="q" type="text" placeholder="Suche (Parameter, Kommentar, Quelle) …" style="flex:1;min-width:200px;">
+    <select id="filterParam"><option value="">Alle Parameter</option></select>
+    <button id="refreshBtn" class="secondary">Aktualisieren</button>
+  </div>
+  <div id="listMsg" class="msg" style="display:none;"></div>
+  <table>
+    <thead>
+      <tr><th>Datum</th><th>Parameter</th><th>Wert</th><th>Kommentar</th><th>Quelle</th><th>Erstellt</th><th></th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="empty" class="empty" style="display:none;">Keine Einträge gefunden.</div>
+</main>
+
+<dialog id="editDialog">
+  <div class="card">
+    <h2>Eintrag bearbeiten</h2>
+    <input type="hidden" id="e_id">
+    <div class="field"><label>Datum / Zeit</label><input id="e_datum" type="datetime-local"></div>
+    <div class="field"><label>Parameter</label><select id="e_param"></select></div>
+    <div class="field"><label>Wert</label><input id="e_value" type="number" step="any"></div>
+    <div class="field"><label>Kommentar</label><input id="e_comment" type="text"></div>
+    <div class="field"><label>Quelle</label><input id="e_source" type="text"></div>
+    <div id="editMsg" class="msg" style="display:none;"></div>
+    <div class="actions">
+      <button class="secondary" id="cancelEdit">Abbrechen</button>
+      <button id="saveEdit">Speichern</button>
+    </div>
+  </div>
+</dialog>
+
+<script src="assets/turso.js"></script>
+<script>
+const addMsg = document.getElementById('addMsg');
+const listMsg = document.getElementById('listMsg');
+let allParams = [];
+let allRows = [];
+
+async function loadParams(){
+  const client = getClient();
+  const res = await client.execute('SELECT ParameterID, Name, Einheit, Active FROM seestrasse_parameter ORDER BY Name');
+  allParams = TursoClient.rowsToObjects(res);
+  const activeOptions = allParams.filter(p => Number(p.Active) === 1)
+    .map(p => `<option value="${p.ParameterID}">${escapeHtml(p.Name)}${p.Einheit ? ' ('+escapeHtml(p.Einheit)+')' : ''}</option>`).join('');
+  document.getElementById('f_param').innerHTML = activeOptions;
+  document.getElementById('e_param').innerHTML = allParams
+    .map(p => `<option value="${p.ParameterID}">${escapeHtml(p.Name)}${p.Einheit ? ' ('+escapeHtml(p.Einheit)+')' : ''}</option>`).join('');
+  document.getElementById('filterParam').innerHTML = '<option value="">Alle Parameter</option>' +
+    allParams.map(p => `<option value="${p.ParameterID}">${escapeHtml(p.Name)}</option>`).join('');
+}
+
+function paramName(id){
+  const p = allParams.find(x => String(x.ParameterID) === String(id));
+  return p ? p.Name : '#' + id;
+}
+function paramUnit(id){
+  const p = allParams.find(x => String(x.ParameterID) === String(id));
+  return p ? (p.Einheit || '') : '';
+}
+
+async function loadRows(){
+  const client = getClient();
+  const res = await client.execute('SELECT LogID, Datum, ParameterID, Value, Comment, Source, CreatedAt FROM seestrasse_log ORDER BY Datum DESC LIMIT 500');
+  allRows = TursoClient.rowsToObjects(res);
+  render();
+}
+
+function render(){
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  const fp = document.getElementById('filterParam').value;
+  const filtered = allRows.filter(r => {
+    if(fp && String(r.ParameterID) !== String(fp)) return false;
+    if(!q) return true;
+    const hay = [paramName(r.ParameterID), r.Comment, r.Source].join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+  document.getElementById('empty').style.display = filtered.length ? 'none' : 'block';
+  document.getElementById('rows').innerHTML = filtered.map(r => `
+    <tr>
+      <td>${fmtDateTime(r.Datum)}</td>
+      <td>${escapeHtml(paramName(r.ParameterID))}</td>
+      <td class="num">${r.Value === null ? '' : escapeHtml(r.Value)} <span style="color:var(--grey-600);">${escapeHtml(paramUnit(r.ParameterID))}</span></td>
+      <td>${escapeHtml(r.Comment)}</td>
+      <td>${escapeHtml(r.Source)}</td>
+      <td class="mono" style="font-size:11px;color:var(--grey-600);">${fmtDateTime(r.CreatedAt)}</td>
+      <td style="white-space:nowrap;">
+        <button class="small secondary" onclick="openEdit(${r.LogID})">Bearbeiten</button>
+        <button class="small danger" onclick="deleteRow(${r.LogID})">Löschen</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+document.getElementById('q').addEventListener('input', render);
+document.getElementById('filterParam').addEventListener('change', render);
+document.getElementById('refreshBtn').addEventListener('click', loadRows);
+
+document.getElementById('addBtn').addEventListener('click', async () => {
+  const datum = localInputToISO(document.getElementById('f_datum').value);
+  const paramId = document.getElementById('f_param').value;
+  const value = document.getElementById('f_value').value;
+  const comment = document.getElementById('f_comment').value;
+  const source = document.getElementById('f_source').value;
+  if(!datum || !paramId){ showMsg(addMsg, 'Datum und Parameter sind erforderlich.', 'err'); return; }
+  try{
+    const client = getClient();
+    await client.execute(
+      'INSERT INTO seestrasse_log (Datum, ParameterID, Value, Comment, Source, CreatedAt) VALUES (?, ?, ?, ?, ?, ?)',
+      [datum, Number(paramId), value === '' ? null : Number(value), comment || null, source || null, nowISO()]
+    );
+    showMsg(addMsg, 'Eintrag gespeichert.', 'ok');
+    document.getElementById('f_value').value = '';
+    document.getElementById('f_comment').value = '';
+    document.getElementById('f_source').value = '';
+    await loadRows();
+  }catch(e){
+    showMsg(addMsg, 'Fehler: ' + e.message, 'err');
+  }
+});
+
+const dialog = document.getElementById('editDialog');
+window.openEdit = function(id){
+  const r = allRows.find(x => String(x.LogID) === String(id));
+  if(!r) return;
+  document.getElementById('e_id').value = r.LogID;
+  document.getElementById('e_datum').value = isoToLocalInput(r.Datum);
+  document.getElementById('e_param').value = r.ParameterID;
+  document.getElementById('e_value').value = r.Value === null ? '' : r.Value;
+  document.getElementById('e_comment').value = r.Comment || '';
+  document.getElementById('e_source').value = r.Source || '';
+  document.getElementById('editMsg').style.display = 'none';
+  dialog.showModal();
+};
+document.getElementById('cancelEdit').addEventListener('click', () => dialog.close());
+
+document.getElementById('saveEdit').addEventListener('click', async () => {
+  const editMsg = document.getElementById('editMsg');
+  const id = document.getElementById('e_id').value;
+  const datum = localInputToISO(document.getElementById('e_datum').value);
+  const paramId = document.getElementById('e_param').value;
+  const value = document.getElementById('e_value').value;
+  const comment = document.getElementById('e_comment').value;
+  const source = document.getElementById('e_source').value;
+  try{
+    const client = getClient();
+    await client.execute(
+      'UPDATE seestrasse_log SET Datum=?, ParameterID=?, Value=?, Comment=?, Source=? WHERE LogID=?',
+      [datum, Number(paramId), value === '' ? null : Number(value), comment || null, source || null, Number(id)]
+    );
+    dialog.close();
+    await loadRows();
+  }catch(e){
+    showMsg(editMsg, 'Fehler: ' + e.message, 'err');
+  }
+});
+
+window.deleteRow = async function(id){
+  if(!confirm('Diesen Eintrag wirklich löschen?')) return;
+  try{
+    const client = getClient();
+    await client.execute('DELETE FROM seestrasse_log WHERE LogID=?', [Number(id)]);
+    await loadRows();
+  }catch(e){
+    showMsg(listMsg, 'Fehler beim Löschen: ' + e.message, 'err');
+  }
+};
+
+(async () => {
+  try{
+    await loadParams();
+    await loadRows();
+  }catch(e){
+    showMsg(listMsg, 'Fehler beim Laden: ' + e.message, 'err');
+  }
+})();
+</script>
+</body>
+</html>
