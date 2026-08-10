@@ -7,7 +7,7 @@ Turso DB: `munostadtadtseetstrasse52bdb` (Bearer-Token, clientseitig via `/v2/pi
 
 1. Repo `ManagerSeestrasse52B` erstellen, alle Dateien pushen, GitHub Pages aktivieren.
 2. Schema in der Turso-DB anlegen: `schema.sql` (z.B. via Turso CLI, Drizzle Studio Codespace, oder `run-sql.yml`-Workflow).
-3. Seite öffnen → `config.html` → Turso HTTP URL + Auth Token eintragen (wird nur in `localStorage` gespeichert, Key `TURSO_CFG`).
+3. Seite öffnen → `config.html` → Turso HTTP URL + Auth Token eintragen (wird nur in `localStorage` gespeichert, unter dem app-spezifischen Key `munotstadt_seestrasse52b_turso_cfg` — nicht generisch, da alle Munotstadt-Tools unter `munotstadt.github.io` dieselbe Origin teilen).
 
 ## Seiten
 
