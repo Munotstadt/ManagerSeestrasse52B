@@ -13,6 +13,7 @@
     <a href="index.html">Übersicht</a>
     <a href="log.html">Log</a>
     <a href="admin.html">Admin</a>
+    <a href="eve-data.html">Eve-Data</a>
     <a href="config.html">Konfiguration</a>
   </nav>
 </header>
@@ -162,18 +163,22 @@ function renderRows(){
   `).join('');
 }
 
-async function load(){
+async function load(forceRefresh){
   if(!paramId){ showMsg(msg, 'Kein Parameter angegeben.', 'err'); return; }
   const client = getClient();
-  const pRes = await client.execute('SELECT ParameterID, Name, Einheit FROM seestrasse_parameter WHERE ParameterID = ?', [Number(paramId)]);
-  const pObjs = TursoClient.rowsToObjects(pRes);
+  if(forceRefresh) cacheInvalidate('log:by_param:' + paramId);
+
+  const pObjs = await queryCached(client, 'param:by_id:' + paramId,
+    'SELECT ParameterID, Name, Einheit FROM seestrasse_parameter WHERE ParameterID = ?', [Number(paramId)]
+  );
   if(pObjs.length === 0){ showMsg(msg, 'Parameter nicht gefunden.', 'err'); return; }
   param = pObjs[0];
   document.title = 'Seestrasse 52B · ' + param.Name;
   document.getElementById('title').textContent = param.Name + (param.Einheit ? ' (' + param.Einheit + ')' : '');
 
-  const lRes = await client.execute('SELECT LogID, Datum, Value, Comment, Source, CreatedAt FROM seestrasse_log WHERE ParameterID = ? ORDER BY Datum ASC', [Number(paramId)]);
-  rows = TursoClient.rowsToObjects(lRes);
+  rows = await queryCached(client, 'log:by_param:' + paramId,
+    'SELECT LogID, Datum, Value, Comment, Source, CreatedAt FROM seestrasse_log WHERE ParameterID = ? ORDER BY Datum ASC', [Number(paramId)]
+  );
   drawChart(rows.filter(r => r.Value !== null));
   rows = rows.slice().reverse(); // neueste zuerst in Tabelle
   renderRows();
@@ -195,21 +200,35 @@ document.getElementById('cancelEdit').addEventListener('click', () => dialog.clo
 
 document.getElementById('saveEdit').addEventListener('click', async () => {
   const editMsg = document.getElementById('editMsg');
+  const saveBtn = document.getElementById('saveEdit');
   const id = document.getElementById('e_id').value;
   const datum = localInputToISO(document.getElementById('e_datum').value);
   const value = document.getElementById('e_value').value;
   const comment = document.getElementById('e_comment').value;
   const source = document.getElementById('e_source').value;
+  saveBtn.disabled = true;
   try{
     const client = getClient();
+    const dup = TursoClient.rowsToObjects(await client.execute(
+      'SELECT LogID FROM seestrasse_log WHERE Datum = ? AND ParameterID = ? AND LogID != ?',
+      [datum, Number(paramId), Number(id)]
+    ));
+    if(dup.length){
+      showMsg(editMsg, 'Für dieses Datum existiert bereits ein anderer Eintrag – kein Duplikat gespeichert.', 'err');
+      return;
+    }
     await client.execute(
-      'UPDATE seestrasse_log SET Datum=?, Value=?, Comment=?, Source=? WHERE LogID=?',
+      'UPDATE OR IGNORE seestrasse_log SET Datum=?, Value=?, Comment=?, Source=? WHERE LogID=?',
       [datum, value === '' ? null : Number(value), comment || null, source || null, Number(id)]
     );
     dialog.close();
-    await load();
+    cacheInvalidate('log:');
+    cacheInvalidate('index:');
+    await load(true);
   }catch(e){
     showMsg(editMsg, 'Fehler: ' + e.message, 'err');
+  }finally{
+    saveBtn.disabled = false;
   }
 });
 
@@ -218,7 +237,9 @@ window.deleteRow = async function(id){
   try{
     const client = getClient();
     await client.execute('DELETE FROM seestrasse_log WHERE LogID=?', [Number(id)]);
-    await load();
+    cacheInvalidate('log:');
+    cacheInvalidate('index:');
+    await load(true);
   }catch(e){
     showMsg(msg, 'Fehler beim Löschen: ' + e.message, 'err');
   }

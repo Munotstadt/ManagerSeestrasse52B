@@ -13,6 +13,7 @@
     <a href="index.html" class="active">Übersicht</a>
     <a href="log.html">Log</a>
     <a href="admin.html">Admin</a>
+    <a href="eve-data.html">Eve-Data</a>
     <a href="config.html">Konfiguration</a>
   </nav>
 </header>
@@ -21,26 +22,31 @@
   <div id="msg" class="msg" style="display:none;"></div>
   <div id="grid" class="grid"></div>
   <div id="empty" class="empty" style="display:none;">Noch keine aktiven Parameter definiert. <a href="admin.html">Parameter anlegen →</a></div>
+  <button id="refreshBtn" class="secondary" style="margin-top:14px;">Aktualisieren</button>
 </main>
 <script src="assets/turso.js"></script>
 <script>
 const msg = document.getElementById('msg');
 const grid = document.getElementById('grid');
 
-async function load(){
+async function load(forceRefresh){
   try{
     const client = getClient();
-    const paramsRes = await client.execute(
-      'SELECT ParameterID, Name, Einheit FROM seestrasse_parameter WHERE Active = 1 ORDER BY Name'
+    if(forceRefresh){
+      cacheInvalidate('param:');
+      cacheInvalidate('index:');
+    }
+
+    const params = await queryCached(client, 'param:generic:active',
+      "SELECT ParameterID, Name, Einheit FROM seestrasse_parameter WHERE ParaType = 'Generic' AND Active = 1 ORDER BY Name"
     );
-    const params = TursoClient.rowsToObjects(paramsRes);
 
     if(params.length === 0){
       document.getElementById('empty').style.display = 'block';
       return;
     }
 
-    const latestRes = await client.execute(`
+    const latestRows = await queryCached(client, 'index:latest', `
       SELECT l.ParameterID, l.Value, l.Datum
       FROM seestrasse_log l
       INNER JOIN (
@@ -48,7 +54,6 @@ async function load(){
         FROM seestrasse_log GROUP BY ParameterID
       ) m ON m.ParameterID = l.ParameterID AND m.MaxDatum = l.Datum
     `);
-    const latestRows = TursoClient.rowsToObjects(latestRes);
     const latestByParam = {};
     latestRows.forEach(r => { latestByParam[r.ParameterID] = r; });
 
@@ -67,6 +72,7 @@ async function load(){
     showMsg(msg, 'Fehler beim Laden: ' + e.message, 'err');
   }
 }
+document.getElementById('refreshBtn').addEventListener('click', () => load(true));
 load();
 </script>
 </body>
