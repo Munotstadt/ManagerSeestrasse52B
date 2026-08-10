@@ -19,7 +19,7 @@ TURSO_TOKEN = os.environ["TURSO_TOKEN"]
 PARAMETER_ID = 2
 VALUE = 1
 SOURCE = "GitHub Actions Heartbeat"
-COMMENT = "Automatischer Heartbeat"
+COMMENT = None
 
 
 def _to_arg(v):
