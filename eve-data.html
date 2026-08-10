@@ -41,6 +41,11 @@
     <select id="sensorSelect"><option value="">Sensor/Raum wählen …</option></select>
     <button id="refreshSensorsBtn" class="secondary">Aktualisieren</button>
   </div>
+  <div class="seg-group" id="rangeGroup">
+    <button class="seg-btn" data-range="90">90 Tage</button>
+    <button class="seg-btn active" data-range="360">360 Tage</button>
+    <button class="seg-btn" data-range="all">Alle</button>
+  </div>
   <div id="chartsMsg" class="msg" style="display:none;"></div>
   <div id="chartsArea"></div>
 </main>
@@ -197,10 +202,14 @@ async function loadSensors(forceRefresh){
   if(current) sel.value = current;
 }
 
+let currentChartsData = []; // [{ label, unit, rows }]
+let selectedRangeDays = 360; // 90 | 360 | 'all'
+
 document.getElementById('sensorSelect').addEventListener('change', async (ev) => {
   const sensorId = ev.target.value;
   const area = document.getElementById('chartsArea');
   area.innerHTML = '';
+  currentChartsData = [];
   if(!sensorId) return;
   try{
     const client = getClient();
@@ -213,25 +222,72 @@ document.getElementById('sensorSelect').addEventListener('change', async (ev) =>
         'SELECT Datum, Value FROM seestrasse_eve_data WHERE SensorParameterID = ? AND ValueTypeParameterID = ? ORDER BY Datum ASC',
         [Number(sensorId), vt.ParameterID]
       );
-      const wrap = document.createElement('div');
-      wrap.className = 'card';
-      wrap.style.marginBottom = '16px';
-      wrap.innerHTML = `<h3>${escapeHtml(vt.Label || vt.Name)}</h3><div class="chart-wrap" style="position:relative;"></div>`;
-      area.appendChild(wrap);
-      drawEveChart(wrap.querySelector('.chart-wrap'), rows, vt.Einheit || '');
+      currentChartsData.push({ label: vt.Label || vt.Name, unit: vt.Einheit || '', rows });
     }
+    renderAllCharts();
   }catch(e){
     showMsg(chartsMsg, 'Fehler beim Laden: ' + e.message, 'err');
   }
 });
+
+document.getElementById('rangeGroup').addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.seg-btn');
+  if(!btn) return;
+  document.querySelectorAll('#rangeGroup .seg-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const r = btn.dataset.range;
+  selectedRangeDays = r === 'all' ? 'all' : Number(r);
+  renderAllCharts();
+});
+
+function filterByRange(rows, rangeDays){
+  if(rangeDays === 'all' || rows.length === 0) return rows;
+  const maxDate = new Date(rows[rows.length - 1].Datum).getTime();
+  const cutoff = maxDate - rangeDays * 24 * 60 * 60 * 1000;
+  return rows.filter(r => new Date(r.Datum).getTime() >= cutoff);
+}
+
+function movingAverage(rows, windowSize){
+  const result = [];
+  for(let i = 0; i < rows.length; i++){
+    const start = Math.max(0, i - windowSize + 1);
+    const slice = rows.slice(start, i + 1);
+    const avg = slice.reduce((a, r) => a + Number(r.Value), 0) / slice.length;
+    result.push({ Datum: rows[i].Datum, Value: Math.round(avg * 100) / 100 });
+  }
+  return result;
+}
+
+function renderAllCharts(){
+  const area = document.getElementById('chartsArea');
+  area.innerHTML = '';
+  for(const cd of currentChartsData){
+    const wrap = document.createElement('div');
+    wrap.className = 'card';
+    wrap.style.marginBottom = '16px';
+    wrap.innerHTML = `
+      <h3>${escapeHtml(cd.label)}</h3>
+      <div class="chart-legend">
+        <span><span class="swatch" style="background:var(--grey-300);"></span>Tageswert</span>
+        <span><span class="swatch" style="background:var(--red);"></span>Ø 30 Tage</span>
+      </div>
+      <div class="chart-wrap" style="position:relative;"></div>
+    `;
+    area.appendChild(wrap);
+    const filtered = filterByRange(cd.rows, selectedRangeDays);
+    drawEveChart(wrap.querySelector('.chart-wrap'), filtered, cd.unit);
+  }
+}
 
 function drawEveChart(wrap, data, unit){
   if(!data || data.length === 0){
     wrap.innerHTML = '<div class="empty">Keine Daten vorhanden.</div>';
     return;
   }
-  const w = wrap.clientWidth || 800, h = 240;
-  const padL = 50, padR = 16, padT = 16, padB = 30;
+  const maData = movingAverage(data, 30);
+
+  const w = wrap.clientWidth || 800, h = 260;
+  const padL = 50, padR = 16, padT = 16, padB = 34;
   const xs = data.map(d => new Date(d.Datum).getTime());
   const ys = data.map(d => Number(d.Value));
   const xMin = Math.min(...xs), xMax = Math.max(...xs);
@@ -242,22 +298,46 @@ function drawEveChart(wrap, data, unit){
   const xScale = x => padL + (xMax === xMin ? 0 : (x - xMin) / (xMax - xMin)) * (w - padL - padR);
   const yScale = y => h - padB - (yHi === yLo ? 0 : (y - yLo) / (yHi - yLo)) * (h - padT - padB);
 
-  const pts = data.map(d => ({ x: xScale(new Date(d.Datum).getTime()), y: yScale(Number(d.Value)), raw: d }));
-  const path = pts.map((p,i) => (i===0?'M':'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
+  const rawPts = data.map(d => ({ x: xScale(new Date(d.Datum).getTime()), y: yScale(Number(d.Value)), raw: d }));
+  const maPts = maData.map(d => ({ x: xScale(new Date(d.Datum).getTime()), y: yScale(Number(d.Value)), raw: d }));
+  const rawPath = rawPts.map((p,i) => (i===0?'M':'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
+  const maPath = maPts.map((p,i) => (i===0?'M':'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join(' ');
 
+  // Horizontale Gridlinien (Y-Achse)
   const gridLines = 4;
-  let gridSvg = '';
+  let ySvg = '';
   for(let i=0;i<=gridLines;i++){
     const y = padT + i*(h-padT-padB)/gridLines;
     const val = yHi - i*(yHi-yLo)/gridLines;
-    gridSvg += `<line x1="${padL}" y1="${y}" x2="${w-padR}" y2="${y}" stroke="var(--grey-300)" stroke-width="1"/>`;
-    gridSvg += `<text x="${padL-8}" y="${y+4}" text-anchor="end" font-size="10" font-family="IBM Plex Mono" fill="#666">${val.toFixed(1)}</text>`;
+    ySvg += `<line x1="${padL}" y1="${y}" x2="${w-padR}" y2="${y}" stroke="var(--grey-300)" stroke-width="1"/>`;
+    ySvg += `<text x="${padL-8}" y="${y+4}" text-anchor="end" font-size="10" font-family="IBM Plex Mono" fill="#666">${val.toFixed(1)}</text>`;
   }
 
+  // Vertikale Monats-Gridlinien + MM/YY-Beschriftung (X-Achse)
+  const start = new Date(xMin), end = new Date(xMax);
+  let tick = new Date(start.getFullYear(), start.getMonth(), 1);
+  const monthTicks = [];
+  while(tick.getTime() <= xMax){
+    if(tick.getTime() >= xMin) monthTicks.push(new Date(tick));
+    tick = new Date(tick.getFullYear(), tick.getMonth() + 1, 1);
+  }
+  const maxLabels = 9;
+  const step = Math.max(1, Math.ceil(monthTicks.length / maxLabels));
+  let xSvg = '';
+  monthTicks.forEach((d, i) => {
+    if(i % step !== 0) return;
+    const x = xScale(d.getTime());
+    const label = `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getFullYear()).slice(-2)}`;
+    xSvg += `<line x1="${x}" y1="${padT}" x2="${x}" y2="${h-padB}" stroke="var(--grey-300)" stroke-width="1"/>`;
+    xSvg += `<text x="${x}" y="${h-padB+16}" text-anchor="middle" font-size="10" font-family="IBM Plex Mono" fill="#666">${label}</text>`;
+  });
+
   wrap.innerHTML = `
-    <svg class="chart" viewBox="0 0 ${w} ${h}" style="height:240px;">
-      ${gridSvg}
-      <path d="${path}" fill="none" stroke="var(--red)" stroke-width="2"/>
+    <svg class="chart" viewBox="0 0 ${w} ${h}" style="height:${h}px;">
+      ${ySvg}
+      ${xSvg}
+      <path d="${rawPath}" fill="none" stroke="var(--grey-300)" stroke-width="1.5"/>
+      <path d="${maPath}" fill="none" stroke="var(--red)" stroke-width="2"/>
       <rect class="hitRect" x="${padL}" y="${padT}" width="${w-padL-padR}" height="${h-padT-padB}" fill="transparent"/>
       <circle class="hoverDot" r="4" fill="var(--red)" style="display:none;"/>
     </svg>
@@ -271,22 +351,24 @@ function drawEveChart(wrap, data, unit){
   wrap.appendChild(tooltip);
 
   function nearest(mx){
-    let best = pts[0], bestDist = Infinity;
-    for(const p of pts){
+    let best = rawPts[0], bestIdx = 0, bestDist = Infinity;
+    rawPts.forEach((p, idx) => {
       const d = Math.abs(p.x - mx);
-      if(d < bestDist){ bestDist = d; best = p; }
-    }
-    return best;
+      if(d < bestDist){ bestDist = d; best = p; bestIdx = idx; }
+    });
+    return { point: best, idx: bestIdx };
   }
   function handleMove(clientX, rect){
     const mx = (clientX - rect.left) * (w / rect.width);
-    const p = nearest(mx);
+    const { point, idx } = nearest(mx);
+    const maPoint = maPts[idx];
     hoverDot.style.display = 'block';
-    hoverDot.setAttribute('cx', p.x); hoverDot.setAttribute('cy', p.y);
+    hoverDot.setAttribute('cx', point.x); hoverDot.setAttribute('cy', point.y);
     tooltip.style.display = 'block';
-    tooltip.style.left = ((p.x/w)*rect.width) + 'px';
-    tooltip.style.top = ((p.y/h)*rect.height) + 'px';
-    tooltip.textContent = `${fmtDate(p.raw.Datum)} · ${p.raw.Value}${unit ? ' '+unit : ''}`;
+    tooltip.style.left = ((point.x/w)*rect.width) + 'px';
+    tooltip.style.top = ((point.y/h)*rect.height) + 'px';
+    const uSuffix = unit ? ' '+unit : '';
+    tooltip.textContent = `${fmtDate(point.raw.Datum)} · ${point.raw.Value}${uSuffix} · Ø30: ${maPoint.raw.Value}${uSuffix}`;
   }
   hitRect.addEventListener('mousemove', (ev) => handleMove(ev.clientX, svg.getBoundingClientRect()));
   hitRect.addEventListener('mouseleave', () => { hoverDot.style.display='none'; tooltip.style.display='none'; });
