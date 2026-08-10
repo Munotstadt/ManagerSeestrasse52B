@@ -79,6 +79,55 @@ function getClient(){
   return new TursoClient(cfg.url, cfg.token);
 }
 
+/* ---- Read-Cache (sessionStorage, 60-Min TTL, Write-Invalidation) ----
+   Schont die Turso-Row-Read-Quote: identische Leseabfragen innerhalb
+   einer Tab-Session werden nicht erneut gegen die DB ausgeführt.
+   Prefix ist app-spezifisch, damit sich mehrere Munotstadt-Tools unter
+   derselben github.io-Domain nicht gegenseitig überschreiben. */
+
+const CACHE_PREFIX = 'munotstadt_seestrasse52b_cache_';
+const CACHE_TTL_MS = 60 * 60 * 1000; // 60 Minuten
+
+function cacheGet(key){
+  try{
+    const raw = sessionStorage.getItem(CACHE_PREFIX + key);
+    if(!raw) return null;
+    const parsed = JSON.parse(raw);
+    if(Date.now() - parsed.ts > CACHE_TTL_MS) return null;
+    return parsed.data;
+  }catch(e){ return null; }
+}
+
+function cacheSet(key, data){
+  try{
+    sessionStorage.setItem(CACHE_PREFIX + key, JSON.stringify({ ts: Date.now(), data }));
+  }catch(e){ /* z.B. Storage voll – Cache ist best-effort, kein Fehlerabbruch */ }
+}
+
+// Löscht alle Cache-Einträge, deren Key mit dem gegebenen Präfix beginnt.
+// Nach jedem INSERT/UPDATE/DELETE für die betroffene(n) Tabelle(n) aufrufen.
+function cacheInvalidate(keyPrefix){
+  try{
+    const toRemove = [];
+    for(let i = 0; i < sessionStorage.length; i++){
+      const k = sessionStorage.key(i);
+      if(k && k.startsWith(CACHE_PREFIX + keyPrefix)) toRemove.push(k);
+    }
+    toRemove.forEach(k => sessionStorage.removeItem(k));
+  }catch(e){ /* best effort */ }
+}
+
+// Cached SELECT: liefert Objekte (nicht das rohe Turso-Result).
+// cacheKey sollte die Query eindeutig identifizieren, z.B. 'seestrasse_parameter:generic'.
+async function queryCached(client, cacheKey, sql, args = []){
+  const cached = cacheGet(cacheKey);
+  if(cached !== null) return cached;
+  const result = await client.execute(sql, args);
+  const rows = TursoClient.rowsToObjects(result);
+  cacheSet(cacheKey, rows);
+  return rows;
+}
+
 /* ---- Datum/Zeit Helpers ----
    Speicherung in DB: ISO 8601 "YYYY-MM-DDTHH:MM:SS" (sortierbar).
    Anzeige: immer DD.MM.YYYY HH:MM:SS bzw. DD.MM.YYYY. */
