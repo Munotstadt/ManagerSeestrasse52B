@@ -1,8 +1,8 @@
 /* Seestrasse 52B – Turso HTTP Client + Helpers
    Muster: gleiche Turso-HTTP-Pipeline-Anbindung wie securitydashboard.
-   Config liegt clientseitig in localStorage unter dem Key TURSO_CFG. */
+   Config liegt clientseitig in localStorage unter einem app-spezifischen Key (siehe CFG_KEY), damit sich mehrere Munotstadt-Tools unter derselben github.io-Domain nicht gegenseitig überschreiben. */
 
-const CFG_KEY = 'TURSO_CFG';
+const CFG_KEY = 'munotstadt_seestrasse52b_turso_cfg';
 
 function getCfg(){
   try{
