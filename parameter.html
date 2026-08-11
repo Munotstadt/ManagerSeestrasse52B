@@ -20,6 +20,10 @@
 <main>
   <div id="msg" class="msg" style="display:none;"></div>
   <h1 id="title">Parameter</h1>
+  <div class="seg-group" id="chartModeGroup">
+    <button class="seg-btn active" data-mode="line">Linie</button>
+    <button class="seg-btn" data-mode="bar">Differenz (Balken)</button>
+  </div>
   <div style="position:relative;">
     <div id="chartWrap" class="card"></div>
   </div>
@@ -163,6 +167,126 @@ function renderRows(){
   `).join('');
 }
 
+// Berechnet die Differenz zwischen aufeinanderfolgenden Werten (für kumulierte
+// Messwerte wie Zählerstände) – erster Punkt hat keine Vorperiode und entfällt.
+function toDiffSeries(dataAsc){
+  const diffs = [];
+  for(let i = 1; i < dataAsc.length; i++){
+    diffs.push({ Datum: dataAsc[i].Datum, Value: Math.round((dataAsc[i].Value - dataAsc[i-1].Value) * 100) / 100 });
+  }
+  return diffs;
+}
+
+function drawBarChart(data){
+  const wrap = document.getElementById('chartWrap');
+  if(data.length === 0){
+    wrap.innerHTML = '<div class="empty">Zu wenig Datenpunkte für eine Differenzdarstellung (mind. 2 Werte nötig).</div>';
+    return;
+  }
+  const w = wrap.clientWidth || 800, h = 280;
+  const padL = 50, padR = 16, padT = 16, padB = 30;
+  const yMin = Math.min(0, ...data.map(d => d.Value));
+  const yMax = Math.max(0, ...data.map(d => d.Value));
+  const yPad = (yMax - yMin) * 0.1 || 1;
+  const yLo = yMin - yPad, yHi = yMax + yPad;
+
+  const yScale = y => h - padB - (yHi === yLo ? 0 : (y - yLo) / (yHi - yLo)) * (h - padT - padB);
+  const zeroY = yScale(0);
+  const innerW = w - padL - padR;
+  const n = data.length;
+  const gap = innerW / n * 0.25;
+  const barW = innerW / n - gap;
+
+  const gridLines = 4;
+  let gridSvg = '';
+  for(let i=0;i<=gridLines;i++){
+    const y = padT + i*(h-padT-padB)/gridLines;
+    const val = yHi - i*(yHi-yLo)/gridLines;
+    gridSvg += `<line x1="${padL}" y1="${y}" x2="${w-padR}" y2="${y}" stroke="var(--grey-300)" stroke-width="1"/>`;
+    gridSvg += `<text x="${padL-8}" y="${y+4}" text-anchor="end" font-size="10" font-family="IBM Plex Mono" fill="#666">${val.toFixed(1)}</text>`;
+  }
+
+  let barsSvg = '';
+  const bars = [];
+  data.forEach((d, i) => {
+    const x = padL + i * (innerW / n) + gap / 2;
+    const y = yScale(Math.max(0, d.Value));
+    const barH = Math.abs(yScale(d.Value) - zeroY);
+    bars.push({ x, y: Math.min(y, zeroY), w: barW, h: Math.max(barH, 1), raw: d });
+    barsSvg += `<rect x="${x.toFixed(1)}" y="${Math.min(y, zeroY).toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(barH,1).toFixed(1)}" fill="var(--red)" rx="2"/>`;
+  });
+
+  const labelStep = Math.max(1, Math.ceil(n / 10));
+  let xLabelsSvg = '';
+  data.forEach((d, i) => {
+    if(i % labelStep !== 0) return;
+    const x = padL + i * (innerW / n) + (innerW / n) / 2;
+    const dt = new Date(d.Datum);
+    const label = `${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getFullYear()).slice(-2)}`;
+    xLabelsSvg += `<text x="${x}" y="${h-padB+16}" text-anchor="middle" font-size="10" font-family="IBM Plex Mono" fill="#666">${label}</text>`;
+  });
+
+  wrap.innerHTML = `
+    <svg class="chart" viewBox="0 0 ${w} ${h}" id="svgChart">
+      ${gridSvg}
+      <line x1="${padL}" y1="${zeroY}" x2="${w-padR}" y2="${zeroY}" stroke="var(--ink)" stroke-width="1"/>
+      ${barsSvg}
+      ${xLabelsSvg}
+    </svg>
+  `;
+  const svg = document.getElementById('svgChart');
+  const tooltip = document.createElement('div');
+  tooltip.className = 'chart-tooltip';
+  tooltip.style.display = 'none';
+  wrap.style.position = 'relative';
+  wrap.appendChild(tooltip);
+
+  function nearestBar(mx){
+    let best = bars[0], bestDist = Infinity;
+    for(const b of bars){
+      const cx = b.x + b.w/2;
+      const d = Math.abs(cx - mx);
+      if(d < bestDist){ bestDist = d; best = b; }
+    }
+    return best;
+  }
+  function handleMove(clientX, clientY, rect){
+    const mx = (clientX - rect.left) * (w / rect.width);
+    const b = nearestBar(mx);
+    tooltip.style.display = 'block';
+    tooltip.style.left = ((b.x + b.w/2)/w * rect.width) + 'px';
+    tooltip.style.top = (b.y/h * rect.height) + 'px';
+    tooltip.textContent = `${fmtDate(b.raw.Datum)} · ${b.raw.Value > 0 ? '+' : ''}${b.raw.Value}${param.Einheit ? ' '+param.Einheit : ''}`;
+  }
+  svg.addEventListener('mousemove', (ev) => handleMove(ev.clientX, ev.clientY, svg.getBoundingClientRect()));
+  svg.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+  svg.addEventListener('touchmove', (ev) => {
+    const t = ev.touches[0];
+    handleMove(t.clientX, t.clientY, svg.getBoundingClientRect());
+    ev.preventDefault();
+  }, { passive:false });
+}
+
+let chartMode = 'line';
+
+function renderChart(){
+  const dataAsc = rows.filter(r => r.Value !== null).slice().reverse(); // rows ist neueste-zuerst
+  if(chartMode === 'bar'){
+    drawBarChart(toDiffSeries(dataAsc));
+  }else{
+    drawChart(dataAsc);
+  }
+}
+
+document.getElementById('chartModeGroup').addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.seg-btn');
+  if(!btn) return;
+  document.querySelectorAll('#chartModeGroup .seg-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  chartMode = btn.dataset.mode;
+  renderChart();
+});
+
 async function load(forceRefresh){
   if(!paramId){ showMsg(msg, 'Kein Parameter angegeben.', 'err'); return; }
   const client = getClient();
@@ -179,9 +303,9 @@ async function load(forceRefresh){
   rows = await queryCached(client, 'log:by_param:' + paramId,
     'SELECT LogID, Datum, Value, Comment, Source, CreatedAt FROM seestrasse_log WHERE ParameterID = ? ORDER BY Datum ASC', [Number(paramId)]
   );
-  drawChart(rows.filter(r => r.Value !== null));
   rows = rows.slice().reverse(); // neueste zuerst in Tabelle
   renderRows();
+  renderChart();
 }
 
 const dialog = document.getElementById('editDialog');
@@ -246,7 +370,7 @@ window.deleteRow = async function(id){
 };
 
 load().catch(e => showMsg(msg, 'Fehler beim Laden: ' + e.message, 'err'));
-window.addEventListener('resize', () => { if(param) drawChart(rows.filter(r => r.Value !== null).slice().reverse()); });
+window.addEventListener('resize', () => { if(param) renderChart(); });
 </script>
 </body>
 </html>
