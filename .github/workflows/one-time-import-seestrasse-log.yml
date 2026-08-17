@@ -1,0 +1,67 @@
+name: One-time Import - seestrasse_log
+
+# Manuell auslösbar unter dem "Actions" Tab in GitHub.
+# Läuft NUR wenn du auf "Run workflow" klickst - kein automatischer Trigger.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install libsql client
+        run: npm install @libsql/client
+
+      - name: Run SQL import against Turso
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+        run: |
+          node <<'EOF'
+          const { createClient } = require('@libsql/client');
+          const fs = require('fs');
+
+          const client = createClient({
+            url: process.env.TURSO_DATABASE_URL,
+            authToken: process.env.TURSO_AUTH_TOKEN,
+          });
+
+          async function main() {
+            const sql = fs.readFileSync('scripts/seestrasse_log_insert.sql', 'utf8');
+
+            // Strip comment lines (-- ...) and split into individual statements
+            const cleaned = sql
+              .split('\n')
+              .filter(line => !line.trim().startsWith('--'))
+              .join('\n');
+
+            const statements = cleaned
+              .split(';')
+              .map(s => s.trim())
+              .filter(s => s.length > 0);
+
+            console.log(`Found ${statements.length} statement(s) to execute.`);
+
+            for (const stmt of statements) {
+              await client.execute(stmt);
+            }
+
+            console.log('Import completed successfully.');
+
+            const result = await client.execute("SELECT COUNT(*) as cnt FROM seestrasse_log WHERE Source = 'Google Import'");
+            console.log('Rows now in seestrasse_log with Source=Google Import:', result.rows[0].cnt);
+          }
+
+          main().catch(err => {
+            console.error('Import failed:', err);
+            process.exit(1);
+          });
+          EOF
