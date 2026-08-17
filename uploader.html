@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>Uploader – Seestrasse 52B Manager</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f8;
+    --panel: #ffffff;
+    --border: #d9dde1;
+    --text: #1c1f22;
+    --muted: #6b7278;
+    --accent: #2d6a4f;
+    --accent-hover: #1e5138;
+    --error: #b3261e;
+    --error-bg: #fdecea;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px 16px 64px;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  .tab {
+    padding: 10px 16px; font-size: 13px; font-weight: 500; cursor: pointer;
+    color: var(--muted); border-bottom: 2px solid transparent; user-select: none;
+  }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab:hover:not(.active) { color: var(--text); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 14px; margin: 0 0 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12.5px; font-weight: 500; margin-bottom: 5px; }
+  .field select, .field input[type=text], .field input[type=number], .field input[type=date], .field input[type=time], .field textarea {
+    width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 6px;
+    font-size: 13px; font-family: inherit; background: #fff; color: var(--text);
+  }
+  .field textarea { min-height: 60px; resize: vertical; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  .dropzone {
+    border: 2px dashed var(--border);
+    border-radius: 6px;
+    padding: 32px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .dropzone.drag { border-color: var(--accent); background: #f0f7f4; }
+  .dropzone p { margin: 0; color: var(--muted); font-size: 14px; }
+  .dropzone strong { color: var(--text); }
+  input[type=file] { display: none; }
+  .filename { font-family: var(--mono); font-size: 13px; margin-top: 10px; color: var(--text); }
+
+  .stats { display: flex; gap: 24px; flex-wrap: wrap; margin: 16px 0 0; font-size: 13px; }
+  .stats div b { display: block; font-size: 20px; font-weight: 600; }
+  .stats .ok b { color: var(--accent); }
+  .stats .err b { color: var(--error); }
+
+  .errbox {
+    background: var(--error-bg); border: 1px solid #f3c6c2; border-radius: 6px;
+    padding: 12px 14px; margin-top: 14px; font-size: 13px; color: #7a1f18;
+    max-height: 220px; overflow-y: auto;
+  }
+  .errbox ul { margin: 6px 0 0; padding-left: 18px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+  td.num { font-family: var(--mono); }
+  .tablewrap { max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; margin-top: 10px; }
+  .row-dupe { background: #fff8e1; }
+
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  button {
+    appearance: none; border: none; border-radius: 6px;
+    padding: 10px 16px; font-size: 13px; font-weight: 500;
+    cursor: pointer; transition: background .15s;
+  }
+  button.primary { background: var(--accent); color: #fff; }
+  button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+  button.primary:disabled { background: #a9b3ac; cursor: not-allowed; }
+  button.secondary { background: #eef0f1; color: var(--text); border: 1px solid var(--border); }
+  button.secondary:hover:not(:disabled) { background: #e3e6e8; }
+  button.secondary:disabled { opacity: .5; cursor: not-allowed; }
+
+  textarea.mono-out {
+    width: 100%; min-height: 160px; font-family: var(--mono); font-size: 12px;
+    border: 1px solid var(--border); border-radius: 6px; padding: 10px;
+    background: #fbfbfb; resize: vertical;
+  }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .badge { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 10px; background: #eef0f1; color: var(--muted); font-family: var(--mono); }
+  .status { font-size: 13px; margin-top: 10px; }
+  .status.success { color: var(--accent); }
+  .status.error { color: var(--error); }
+  .assumption {
+    font-size: 12px; background: #fff8e1; border: 1px solid #f0dfa0; border-radius: 6px;
+    padding: 8px 10px; margin-bottom: 14px; color: #6b5300;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Uploader</h1>
+  <p class="sub">Seestrasse 52B Manager — manueller Upload, Eve-Upload und Skoda-Upload an einem Ort</p>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="manual">Manueller Upload</div>
+    <div class="tab" data-tab="eve">Eve Upload</div>
+    <div class="tab" data-tab="skoda">Skoda Upload</div>
+  </div>
+
+  <!-- ============ MANUELLER UPLOAD ============ -->
+  <div class="panel active" id="panel-manual">
+    <div class="card">
+      <h2>Parameter wählen</h2>
+      <div class="assumption">
+        Annahme: Parameter-Gruppen &amp; Parameter werden per API geladen (<span style="font-family:var(--mono)">GET /api/seestrasse/parameter-groups</span>,
+        <span style="font-family:var(--mono)">GET /api/seestrasse/parameters?groupId=</span>). Ist die API nicht erreichbar, wird eine Demo-Liste angezeigt — bitte Endpoints im Script prüfen/anpassen.
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="paraGroup">Parameter-Gruppe</label>
+          <select id="paraGroup"></select>
+        </div>
+        <div class="field">
+          <label for="paraSelect">Parameter</label>
+          <select id="paraSelect"></select>
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="manDate">Datum</label>
+          <input type="date" id="manDate">
+        </div>
+        <div class="field">
+          <label for="manTime">Uhrzeit</label>
+          <input type="time" id="manTime">
+        </div>
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="manValue">Value</label>
+          <input type="number" step="any" id="manValue">
+        </div>
+        <div class="field">
+          <label for="manComment">Comment</label>
+          <input type="text" id="manComment" placeholder="optional">
+        </div>
+      </div>
+      <div class="actions">
+        <button class="primary" id="btnManualAdd">Eintrag zur Liste hinzufügen</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Zu übertragende Einträge (manuell)</h2>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Datum</th><th>ParameterID</th><th>Value</th><th>Comment</th><th>Source</th><th></th></tr></thead>
+          <tbody id="manualBody"></tbody>
+        </table>
+      </div>
+      <div class="actions">
+        <button class="primary" id="btnManualUpload" disabled>An GitHub-Workflow übergeben (JSON)</button>
+        <button class="secondary" id="btnManualSql" disabled>SQL anzeigen</button>
+      </div>
+      <div class="status" id="manualStatus"></div>
+      <textarea class="mono-out" id="manualSqlOutput" style="display:none;" readonly></textarea>
+    </div>
+  </div>
+
+  <!-- ============ EVE UPLOAD ============ -->
+  <div class="panel" id="panel-eve">
+    <div class="card">
+      <h2>1. EveData-Export wählen</h2>
+      <div class="assumption">
+        Annahme: EveData-Export ist CSV mit Spalten <span style="font-family:var(--mono)">Date, ParameterID (oder Name), Value, Comment</span>.
+        Da mir das reale EveData-Exportformat nicht vorliegt, bitte Spaltennamen im Script (<span style="font-family:var(--mono)">EVE_COLUMN_MAP</span>) an den tatsächlichen Export anpassen.
+      </div>
+      <div class="dropzone" id="eveDropzone">
+        <p><strong>CSV-Datei hierher ziehen</strong> oder klicken zum Auswählen</p>
+        <div class="filename" id="eveFilename"></div>
+      </div>
+      <input type="file" id="eveFileInput" accept=".csv">
+    </div>
+
+    <div class="card" id="eveResultCard" style="display:none;">
+      <h2>2. Prüfung</h2>
+      <div class="stats">
+        <div><span>Zeilen in Datei</span><b id="eveStRows">0</b></div>
+        <div class="ok"><span>Gültige Einträge</span><b id="eveStValid">0</b></div>
+        <div class="err"><span>Duplikate</span><b id="eveStDupes">0</b></div>
+        <div class="err"><span>Fehlerhafte Zeilen</span><b id="eveStInvalid">0</b></div>
+      </div>
+      <div id="eveErrorSection" style="display:none;"><div class="errbox" id="eveErrList"></div></div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Datum</th><th>ParameterID</th><th>Value</th><th>Comment</th><th>Source</th></tr></thead>
+          <tbody id="evePreviewBody"></tbody>
+        </table>
+      </div>
+      <div class="actions">
+        <button class="primary" id="btnEveUpload" disabled>An GitHub-Workflow übergeben (JSON)</button>
+        <button class="secondary" id="btnEveSql" disabled>SQL anzeigen</button>
+        <button class="secondary" id="btnEveDownloadJson" disabled>JSON herunterladen</button>
+      </div>
+      <div class="status" id="eveStatus"></div>
+      <textarea class="mono-out" id="eveSqlOutput" style="display:none;" readonly></textarea>
+    </div>
+  </div>
+
+  <!-- ============ SKODA UPLOAD ============ -->
+  <div class="panel" id="panel-skoda">
+    <div class="card">
+      <h2>1. Datei wählen</h2>
+      <div class="dropzone" id="skodaDropzone">
+        <p><strong>CSV-Datei hierher ziehen</strong> oder klicken zum Auswählen</p>
+        <p style="margin-top:6px;">Erwartet: Skoda Connect Trip-Export (Spalten "End of trip", "End address", "End odometer in km", "End SoC in %")</p>
+        <div class="filename" id="skodaFilename"></div>
+      </div>
+      <input type="file" id="skodaFileInput" accept=".csv">
+    </div>
+
+    <div class="card" id="skodaResultCard" style="display:none;">
+      <h2>2. Prüfung</h2>
+      <div class="stats">
+        <div><span>Fahrten in Datei</span><b id="skodaStTrips">0</b></div>
+        <div class="ok"><span>Log-Einträge (gültig)</span><b id="skodaStValid">0</b></div>
+        <div class="err"><span>Duplikate (Datum+Parameter)</span><b id="skodaStDupes">0</b></div>
+        <div class="err"><span>Fehlerhafte Zeilen</span><b id="skodaStInvalid">0</b></div>
+      </div>
+      <div id="skodaErrorSection" style="display:none;"><div class="errbox" id="skodaErrList"></div></div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Datum</th><th>ParameterID</th><th>Value</th><th>Comment</th><th>Source</th></tr></thead>
+          <tbody id="skodaPreviewBody"></tbody>
+        </table>
+      </div>
+      <p class="hint">Zeilen mit gleichem Datum+ParameterID innerhalb der Datei sind gelb markiert und werden als Duplikat-Fehler behandelt (gemäss UNIQUE INDEX auf seestrasse_log). Insert erfolgt ohne OR IGNORE / OR REPLACE.</p>
+      <div class="actions">
+        <button class="primary" id="btnSkodaUpload" disabled>An GitHub-Workflow übergeben (JSON)</button>
+        <button class="secondary" id="btnSkodaSql" disabled>SQL anzeigen</button>
+        <button class="secondary" id="btnSkodaDownloadJson" disabled>JSON herunterladen</button>
+      </div>
+      <div class="status" id="skodaStatus"></div>
+      <textarea class="mono-out" id="skodaSqlOutput" style="display:none;" readonly></textarea>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ===================== SHARED CONFIG ===================== */
+// TODO: echten GitHub-Workflow-/Webhook-Endpoint eintragen, der den Insert nach Turso macht.
+const UPLOAD_ENDPOINT = "/api/seestrasse/upload";
+const PARAMS_API = "/api/seestrasse/parameter-groups";
+const PARAM_LIST_API = "/api/seestrasse/parameters"; // ?groupId=
+
+const PARAM_KM = 13;
+const PARAM_SOC = 14;
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function sqlEscape(str) { return String(str).replace(/'/g, "''"); }
+function nowIso() { return new Date().toISOString().replace('T',' ').substring(0,19); }
+
+function buildSql(entries) {
+  const now = nowIso();
+  return entries.map(e =>
+    `INSERT INTO seestrasse_log (Datum, ParameterID, Value, Comment, Source, CreatedAt) VALUES ('${e.Datum}', ${e.ParameterID}, ${e.Value}, '${sqlEscape(e.Comment||'')}', '${e.Source}', '${now}');`
+  ).join('\n');
+}
+
+async function pushToWorkflow(entries, statusEl) {
+  statusEl.className = 'status';
+  statusEl.textContent = 'Sende an Workflow …';
+  try {
+    const res = await fetch(UPLOAD_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entries })
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    statusEl.className = 'status success';
+    statusEl.textContent = `✓ ${entries.length} Einträge an ${UPLOAD_ENDPOINT} übergeben. Der GitHub-Workflow übernimmt den Insert nach Turso.`;
+  } catch (err) {
+    statusEl.className = 'status error';
+    statusEl.textContent = `✗ Übergabe fehlgeschlagen (${err.message}). UPLOAD_ENDPOINT im Script anpassen, oder JSON/SQL manuell exportieren.`;
+  }
+}
+
+function downloadJson(entries, filename) {
+  const blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function findDupeKeySet(entries) {
+  const seen = new Map();
+  entries.forEach(e => {
+    const key = e.Datum + '|' + e.ParameterID;
+    seen.set(key, (seen.get(key)||0) + 1);
+  });
+  return new Set([...seen.entries()].filter(([,c]) => c>1).map(([k]) => k));
+}
+
+/* ===================== TABS ===================== */
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+/* ===================== MANUELLER UPLOAD ===================== */
+const manualGroupSel = document.getElementById('paraGroup');
+const manualParamSel = document.getElementById('paraSelect');
+let manualEntries = [];
+
+const DEMO_GROUPS = [
+  { id: 1, name: "Fahrzeug" },
+  { id: 2, name: "Haus" },
+  { id: 3, name: "Solar" }
+];
+const DEMO_PARAMS = {
+  1: [{ id: 13, name: "Kilometerstand" }, { id: 14, name: "SoC" }],
+  2: [{ id: 21, name: "Heizung Vorlauftemp." }],
+  3: [{ id: 30, name: "PV-Ertrag Tag" }]
+};
+
+async function loadGroups() {
+  let groups;
+  try {
+    const res = await fetch(PARAMS_API);
+    if (!res.ok) throw new Error();
+    groups = await res.json();
+  } catch {
+    groups = DEMO_GROUPS; // Fallback – Demo-Daten, da API nicht erreichbar
+  }
+  manualGroupSel.innerHTML = groups.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('');
+  loadParamsForGroup(groups[0]?.id);
+}
+
+async function loadParamsForGroup(groupId) {
+  if (groupId === undefined) { manualParamSel.innerHTML = ''; return; }
+  let params;
+  try {
+    const res = await fetch(`${PARAM_LIST_API}?groupId=${groupId}`);
+    if (!res.ok) throw new Error();
+    params = await res.json();
+  } catch {
+    params = DEMO_PARAMS[groupId] || [];
+  }
+  manualParamSel.innerHTML = params.map(p => `<option value="${p.id}">${escapeHtml(p.name)} (ID ${p.id})</option>`).join('');
+}
+
+manualGroupSel.addEventListener('change', () => loadParamsForGroup(Number(manualGroupSel.value)));
+loadGroups();
+
+function renderManualTable() {
+  const dupeKeys = findDupeKeySet(manualEntries);
+  const tbody = document.getElementById('manualBody');
+  tbody.innerHTML = manualEntries.map((e, i) => `
+    <tr class="${dupeKeys.has(e.Datum+'|'+e.ParameterID) ? 'row-dupe' : ''}">
+      <td class="num">${e.Datum}</td>
+      <td class="num">${e.ParameterID}</td>
+      <td class="num">${e.Value}</td>
+      <td>${escapeHtml(e.Comment||'')}</td>
+      <td><span class="badge">${e.Source}</span></td>
+      <td><button class="secondary" style="padding:4px 8px;font-size:11px;" onclick="removeManual(${i})">Entfernen</button></td>
+    </tr>`).join('');
+  const hasValid = manualEntries.length > dupeKeys.size ? true : (manualEntries.length > 0 && dupeKeys.size === 0);
+  const anyValid = manualEntries.some(e => !dupeKeys.has(e.Datum+'|'+e.ParameterID));
+  document.getElementById('btnManualUpload').disabled = !anyValid;
+  document.getElementById('btnManualSql').disabled = !anyValid;
+}
+window.removeManual = function(i) { manualEntries.splice(i,1); renderManualTable(); };
+
+document.getElementById('btnManualAdd').addEventListener('click', () => {
+  const date = document.getElementById('manDate').value;
+  const time = document.getElementById('manTime').value || '00:00';
+  const value = document.getElementById('manValue').value;
+  const comment = document.getElementById('manComment').value;
+  const paramId = Number(manualParamSel.value);
+
+  if (!date || value === '' || isNaN(Number(value)) || !paramId) {
+    alert('Bitte Datum, Parameter und einen gültigen Value angeben.');
+    return;
+  }
+  manualEntries.push({
+    Datum: `${date} ${time}:00`,
+    ParameterID: paramId,
+    Value: Number(value),
+    Comment: comment,
+    Source: 'Manual'
+  });
+  renderManualTable();
+});
+
+document.getElementById('btnManualSql').addEventListener('click', () => {
+  const dupeKeys = findDupeKeySet(manualEntries);
+  const valid = manualEntries.filter(e => !dupeKeys.has(e.Datum+'|'+e.ParameterID));
+  const ta = document.getElementById('manualSqlOutput');
+  ta.value = buildSql(valid);
+  ta.style.display = ta.style.display === 'none' ? 'block' : 'none';
+});
+
+document.getElementById('btnManualUpload').addEventListener('click', () => {
+  const dupeKeys = findDupeKeySet(manualEntries);
+  const valid = manualEntries.filter(e => !dupeKeys.has(e.Datum+'|'+e.ParameterID));
+  pushToWorkflow(valid, document.getElementById('manualStatus'));
+});
+
+/* ===================== EVE UPLOAD ===================== */
+// Annahme: Spaltennamen im EveData-Export. Bitte an echtes Format anpassen.
+const EVE_COLUMN_MAP = { date: 'Date', paramId: 'ParameterID', value: 'Value', comment: 'Comment' };
+const EVE_SOURCE = 'EveData';
+let eveEntries = [];
+
+setupDropzone('eveDropzone', 'eveFileInput', 'eveFilename', handleEveFile);
+
+function handleEveFile(file) {
+  const reader = new FileReader();
+  reader.onload = evt => processEveCsv(evt.target.result);
+  reader.readAsText(file, 'utf-8');
+}
+
+function processEveCsv(text) {
+  const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+  const rows = parsed.data;
+  const entries = [];
+  const errors = [];
+
+  rows.forEach((row, idx) => {
+    const lineNo = idx + 2;
+    const rawDate = row[EVE_COLUMN_MAP.date];
+    const paramId = row[EVE_COLUMN_MAP.paramId];
+    const value = row[EVE_COLUMN_MAP.value];
+    const comment = row[EVE_COLUMN_MAP.comment] || '';
+
+    if (!rawDate || isNaN(Date.parse(rawDate))) {
+      errors.push(`Zeile ${lineNo}: ungültiges Datum ("${rawDate}")`);
+      return;
+    }
+    if (!paramId || isNaN(Number(paramId))) {
+      errors.push(`Zeile ${lineNo}: ungültige ParameterID ("${paramId}")`);
+      return;
+    }
+    if (value === undefined || value === '' || isNaN(Number(value))) {
+      errors.push(`Zeile ${lineNo}: ungültiger Value ("${value}")`);
+      return;
+    }
+    const d = new Date(rawDate);
+    const iso = d.toISOString().replace('T',' ').substring(0,19);
+    entries.push({ Datum: iso, ParameterID: Number(paramId), Value: Number(value), Comment: comment, Source: EVE_SOURCE });
+  });
+
+  const dupeKeys = findDupeKeySet(entries);
+  dupeKeys.forEach(key => errors.push(`Duplikat: Datum+ParameterID "${key}" kommt mehrfach in der Datei vor.`));
+
+  eveEntries = entries;
+  renderGenericResult({
+    prefix: 'eve', totalCount: rows.length, entries, dupeKeys, errors,
+    totalLabel: 'Zeilen in Datei'
+  });
+}
+
+document.getElementById('btnEveSql').addEventListener('click', () => {
+  const dupeKeys = findDupeKeySet(eveEntries);
+  const valid = eveEntries.filter(e => !dupeKeys.has(e.Datum+'|'+e.ParameterID));
+  const ta = document.getElementById('eveSqlOutput');
+  ta.value = buildSql(valid);
+  ta.style.display = ta.style.display === 'none' ? 'block' : 'none';
+});
+document.getElementById('btnEveDownloadJson').addEventListener('click', () => {
+  const dupeKeys = findDupeKeySet(eveEntries);
+  const valid = eveEntries.filter(e => !dupeKeys.has(e.Datum+'|'+e.ParameterID));
+  downloadJson(valid, 'eve_log_entries.json');
+});
+document.getElementById('btnEveUpload').addEventListener('click', () => {
+  const dupeKeys = findDupeKeySet(eveEntries);
+  const valid = eveEntries.filter(e => !dupeKeys.has(e.Datum+'|'+e.ParameterID));
+  pushToWorkflow(valid, document.getElementById('eveStatus'));
+});
+
+/* ===================== SKODA UPLOAD ===================== */
+const SKODA_SOURCE = 'SkodaApp';
+let skodaEntries = [];
+
+setupDropzone('skodaDropzone', 'skodaFileInput', 'skodaFilename', handleSkodaFile);
+
+function handleSkodaFile(file) {
+  const reader = new FileReader();
+  reader.onload = evt => processSkodaCsv(evt.target.result);
+  reader.readAsText(file, 'utf-8');
+}
+
+function convertSkodaDate(raw) {
+  const m = (raw||'').trim().match(/^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})$/);
+  if (!m) return null;
+  const [, dd, mm, yyyy, hh, min] = m;
+  return `${yyyy}-${mm}-${dd} ${hh}:${min}:00`;
+}
+
+function processSkodaCsv(text) {
+  const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+  const rows = parsed.data;
+  const entries = [];
+  const errors = [];
+
+  rows.forEach((row, idx) => {
+    const lineNo = idx + 2;
+    const rawDate = row['End of trip'];
+    const address = row['End address'] || '';
+    const km = row['End odometer in km'];
+    const soc = row['End SoC in %'];
+
+    const datum = convertSkodaDate(rawDate);
+    if (!datum) {
+      errors.push(`Zeile ${lineNo}: ungültiges Datumsformat in "End of trip" ("${rawDate}")`);
+      return;
+    }
+    if (km === undefined || km === '' || isNaN(Number(km))) {
+      errors.push(`Zeile ${lineNo}: ungültiger/fehlender Wert in "End odometer in km" ("${km}")`);
+    } else {
+      entries.push({ Datum: datum, ParameterID: PARAM_KM, Value: Number(km), Comment: address, Source: SKODA_SOURCE });
+    }
+    if (soc === undefined || soc === '' || isNaN(Number(soc))) {
+      errors.push(`Zeile ${lineNo}: ungültiger/fehlender Wert in "End SoC in %" ("${soc}")`);
+    } else {
+      entries.push({ Datum: datum, ParameterID: PARAM_SOC, Value: Number(soc), Comment: address, Source: SKODA_SOURCE });
+    }
+  });
+
+  const dupeKeys = findDupeKeySet(entries);
+  dupeKeys.forEach(key => errors.push(`Duplikat: Datum+ParameterID "${key}" kommt mehrfach in der Datei vor.`));
+
+  skodaEntries = entries;
+  renderGenericResult({
+    prefix: 'skoda', totalCount: rows.length, entries, dupeKeys, errors,
+    totalLabel: 'Fahrten in Datei'
+  });
+}
+
+document.getElementById('btnSkodaSql').addEventListener('click', () => {
+  const dupeKeys = findDupeKeySet(skodaEntries);
+  const valid = skodaEntries.filter(e => !dupeKeys.has(e.Datum+'|'+e.ParameterID));
+  const ta = document.getElementById('skodaSqlOutput');
+  ta.value = buildSql(valid);
+  ta.style.display = ta.style.display === 'none' ? 'block' : 'none';
+});
+document.getElementById('btnSkodaDownloadJson').addEventListener('click', () => {
+  const dupeKeys = findDupeKeySet(skodaEntries);
+  const valid = skodaEntries.filter(e => !dupeKeys.has(e.Datum+'|'+e.ParameterID));
+  downloadJson(valid, 'skoda_log_entries.json');
+});
+document.getElementById('btnSkodaUpload').addEventListener('click', () => {
+  const dupeKeys = findDupeKeySet(skodaEntries);
+  const valid = skodaEntries.filter(e => !dupeKeys.has(e.Datum+'|'+e.ParameterID));
+  pushToWorkflow(valid, document.getElementById('skodaStatus'));
+});
+
+/* ===================== SHARED UI HELPERS ===================== */
+function setupDropzone(zoneId, inputId, filenameId, onFile) {
+  const zone = document.getElementById(zoneId);
+  const input = document.getElementById(inputId);
+  const filenameEl = document.getElementById(filenameId);
+  zone.addEventListener('click', () => input.click());
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag');
+    if (e.dataTransfer.files.length) { filenameEl.textContent = e.dataTransfer.files[0].name; onFile(e.dataTransfer.files[0]); }
+  });
+  input.addEventListener('change', e => {
+    if (e.target.files.length) { filenameEl.textContent = e.target.files[0].name; onFile(e.target.files[0]); }
+  });
+}
+
+function renderGenericResult({ prefix, totalCount, entries, dupeKeys, errors, totalLabel }) {
+  document.getElementById(`${prefix}ResultCard`).style.display = 'block';
+  document.getElementById(`${prefix}St${prefix==='eve'?'Rows':'Trips'}`).textContent = totalCount;
+
+  let dupeEntryCount = 0;
+  entries.forEach(e => { if (dupeKeys.has(e.Datum+'|'+e.ParameterID)) dupeEntryCount++; });
+
+  document.getElementById(`${prefix}StValid`).textContent = entries.length - dupeEntryCount;
+  document.getElementById(`${prefix}StDupes`).textContent = dupeEntryCount;
+  document.getElementById(`${prefix}StInvalid`).textContent = errors.length - dupeKeys.size;
+
+  const errSection = document.getElementById(`${prefix}ErrorSection`);
+  const errList = document.getElementById(`${prefix}ErrList`);
+  if (errors.length) {
+    errSection.style.display = 'block';
+    errList.innerHTML = `<strong>${errors.length} Problem(e) gefunden — betroffene Einträge werden NICHT hochgeladen:</strong><ul>${errors.map(e=>`<li>${escapeHtml(e)}</li>`).join('')}</ul>`;
+  } else {
+    errSection.style.display = 'none';
+  }
+
+  const tbody = document.getElementById(`${prefix}PreviewBody`);
+  tbody.innerHTML = entries.map(e => {
+    const isDupe = dupeKeys.has(e.Datum+'|'+e.ParameterID);
+    return `<tr class="${isDupe?'row-dupe':''}">
+      <td class="num">${e.Datum}</td><td class="num">${e.ParameterID}</td><td class="num">${e.Value}</td>
+      <td>${escapeHtml(e.Comment||'')}</td><td><span class="badge">${e.Source}</span></td>
+    </tr>`;
+  }).join('');
+
+  const anyValid = entries.some(e => !dupeKeys.has(e.Datum+'|'+e.ParameterID));
+  document.getElementById(`btn${cap(prefix)}Upload`).disabled = !anyValid;
+  document.getElementById(`btn${cap(prefix)}Sql`).disabled = !anyValid;
+  const dlBtn = document.getElementById(`btn${cap(prefix)}DownloadJson`);
+  if (dlBtn) dlBtn.disabled = !anyValid;
+}
+function cap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+</script>
+</body>
+</html>
