@@ -104,22 +104,51 @@ function parseEveWorkbook(arrayBuffer, fileName){
 
 /* ---------- DB Helpers ---------- */
 
-async function ensureParameter(client, cache, paraType, name, label, unit){
-  const key = paraType + '::' + name;
+// Legt einen internen Eve-Parameter (Raum oder Messgrösse) an, sofern noch nicht vorhanden.
+// Achtung: 'Name' ist in seestrasse_parameter GLOBAL eindeutig (nicht nur pro ParaGroup) —
+// kollidiert der gewünschte Name mit einem bereits existierenden Parameter aus einer anderen
+// Gruppe (z.B. manuell im Admin angelegt), würde ein normaler INSERT mit "UNIQUE constraint
+// failed: seestrasse_parameter.Name" fehlschlagen. Deshalb wird bei Kollision automatisch
+// ein eindeutiger Name mit Suffix erzeugt, statt den Upload abzubrechen.
+async function ensureParameter(client, cache, paraGroup, name, label, unit){
+  const key = paraGroup + '::' + name;
   if(cache[key]) return cache[key];
+
   const existing = TursoClient.rowsToObjects(await client.execute(
-    'SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = ? AND Name = ?', [paraType, name]
+    'SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = ? AND Name = ?', [paraGroup, name]
   ));
   if(existing.length){
     cache[key] = existing[0].ParameterID;
     return cache[key];
   }
-  await client.execute(
-    "INSERT INTO seestrasse_parameter (ParaGroup, Name, Label, Einheit, Active) VALUES (?, ?, ?, ?, 1)",
-    [paraType, name, label, unit]
-  );
+
+  let finalName = name;
+  try{
+    await client.execute(
+      "INSERT INTO seestrasse_parameter (ParaGroup, Name, Label, Einheit, Active) VALUES (?, ?, ?, ?, 1)",
+      [paraGroup, finalName, label, unit]
+    );
+  }catch(err){
+    if(!/UNIQUE constraint failed/i.test(err.message)) throw err;
+
+    // Name kollidiert mit einem Parameter aus einer anderen Gruppe. Prüfen, ob evtl. schon
+    // eine passende Eve-Variante mit Suffix existiert (z.B. aus einem früheren Retry).
+    finalName = `${name} (Eve)`;
+    const existingAlt = TursoClient.rowsToObjects(await client.execute(
+      'SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = ? AND Name = ?', [paraGroup, finalName]
+    ));
+    if(existingAlt.length){
+      cache[key] = existingAlt[0].ParameterID;
+      return cache[key];
+    }
+    await client.execute(
+      "INSERT INTO seestrasse_parameter (ParaGroup, Name, Label, Einheit, Active) VALUES (?, ?, ?, ?, 1)",
+      [paraGroup, finalName, label, unit]
+    );
+  }
+
   const created = TursoClient.rowsToObjects(await client.execute(
-    'SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = ? AND Name = ?', [paraType, name]
+    'SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = ? AND Name = ?', [paraGroup, finalName]
   ));
   cache[key] = created[0].ParameterID;
   return cache[key];
@@ -162,19 +191,27 @@ document.getElementById('uploadBtn').addEventListener('click', async () => {
         continue;
       }
 
-      const sensorId = await ensureParameter(client, paramCache, 'Sensor', parsed.raum, parsed.raum, null);
-      const valueTypeId = await ensureParameter(client, paramCache, 'ValueType', parsed.valueType, parsed.label, parsed.unit);
-      await uploadDailyAverages(client, sensorId, valueTypeId, parsed.dailyAverages, file.name);
+      try{
+        const sensorId = await ensureParameter(client, paramCache, 'Sensor', parsed.raum, parsed.raum, null);
+        const valueTypeId = await ensureParameter(client, paramCache, 'ValueType', parsed.valueType, parsed.label, parsed.unit);
+        await uploadDailyAverages(client, sensorId, valueTypeId, parsed.dailyAverages, file.name);
 
-      summaries.push(`
-        <div class="card" style="margin-bottom:10px;">
-          <strong>${escapeHtml(file.name)}</strong><br>
-          <span style="font-size:13px;color:var(--grey-600);">
-            Raum: ${escapeHtml(parsed.raum)} · Messgrösse: ${escapeHtml(parsed.label)}<br>
-            ${parsed.dailyAverages.length} Tage übernommen, ${parsed.skippedDays} Tage übersprungen (unvollständig, &lt; ${MIN_ROWS_PER_DAY} Messungen) von ${parsed.totalDays} Tagen insgesamt.
-          </span>
-        </div>
-      `);
+        summaries.push(`
+          <div class="card" style="margin-bottom:10px;">
+            <strong>${escapeHtml(file.name)}</strong><br>
+            <span style="font-size:13px;color:var(--grey-600);">
+              Raum: ${escapeHtml(parsed.raum)} · Messgrösse: ${escapeHtml(parsed.label)}<br>
+              ${parsed.dailyAverages.length} Tage übernommen, ${parsed.skippedDays} Tage übersprungen (unvollständig, &lt; ${MIN_ROWS_PER_DAY} Messungen) von ${parsed.totalDays} Tagen insgesamt.
+            </span>
+          </div>
+        `);
+      }catch(e){
+        summaries.push(`<div class="msg err">${escapeHtml(file.name)}: ${escapeHtml(e.message)}</div>`);
+      }
+
+      // Zwischenstand nach jeder Datei anzeigen, damit ein Fehler bei einer Datei
+      // nicht die Ergebnisse der bereits erfolgreich verarbeiteten Dateien verschluckt.
+      uploadResults.innerHTML = summaries.join('');
     }
 
     uploadResults.innerHTML = summaries.join('');
