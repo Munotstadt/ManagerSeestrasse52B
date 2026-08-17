@@ -14,10 +14,27 @@
     <a href="log.html">Log</a>
     <a href="admin.html" class="active">Admin</a>
     <a href="eve-data.html">Eve-Data</a>
-    <a href="config.html">Konfiguration</a>
   </nav>
 </header>
 <main>
+  <h1>Turso-Verbindung</h1>
+  <p style="color:var(--grey-600);font-size:13px;">Datenbank: <span class="mono">munostadtadtseetstrasse52bdb</span>. Zugangsdaten werden nur lokal in diesem Browser gespeichert (localStorage).</p>
+  <div class="card" style="max-width:520px;margin-bottom:26px;">
+    <div class="field">
+      <label for="url">Turso HTTP URL</label>
+      <input id="url" type="text" inputmode="url" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" placeholder="https://munostadtadtseetstrasse52bdb-org.turso.io">
+    </div>
+    <div class="field">
+      <label for="token">Auth Token</label>
+      <input id="token" type="password" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" placeholder="ey...">
+    </div>
+    <div id="cfgMsg" class="msg" style="display:none;"></div>
+    <div style="display:flex;gap:8px;">
+      <button id="saveCfgBtn">Speichern</button>
+      <button id="testCfgBtn" class="secondary">Verbindung testen</button>
+    </div>
+  </div>
+
   <h1>Parameter definieren</h1>
   <div id="addMsg" class="msg" style="display:none;"></div>
   <div class="card" style="margin-bottom:26px;">
@@ -37,7 +54,7 @@
   <h1>Bestehende Parameter</h1>
   <div id="listMsg" class="msg" style="display:none;"></div>
   <table>
-    <thead><tr><th>Name</th><th>Einheit</th><th>Status</th><th>Einträge</th><th></th></tr></thead>
+    <thead><tr><th>ParameterID</th><th>Name</th><th>Einheit</th><th>Status</th><th>Einträge</th><th></th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
   <div id="empty" class="empty" style="display:none;">Noch keine Parameter angelegt.</div>
@@ -70,6 +87,35 @@ const listMsg = document.getElementById('listMsg');
 let params = [];
 let counts = {};
 
+/* ---- Turso-Konfiguration (übernommen aus config.html) ---- */
+const cfgMsg = document.getElementById('cfgMsg');
+const existingCfg = getCfg();
+if(existingCfg){
+  document.getElementById('url').value = existingCfg.url || '';
+  document.getElementById('token').value = existingCfg.token || '';
+}
+
+document.getElementById('saveCfgBtn').addEventListener('click', () => {
+  const url = document.getElementById('url').value.trim();
+  const token = document.getElementById('token').value.trim();
+  if(!url || !token){ showMsg(cfgMsg, 'Bitte URL und Token angeben.', 'err'); return; }
+  setCfg(url, token);
+  showMsg(cfgMsg, 'Gespeichert.', 'ok');
+});
+
+document.getElementById('testCfgBtn').addEventListener('click', async () => {
+  const url = document.getElementById('url').value.trim();
+  const token = document.getElementById('token').value.trim();
+  if(!url || !token){ showMsg(cfgMsg, 'Bitte URL und Token angeben.', 'err'); return; }
+  try{
+    const client = new TursoClient(url, token);
+    await client.execute('SELECT 1');
+    showMsg(cfgMsg, 'Verbindung erfolgreich.', 'ok');
+  }catch(e){
+    showMsg(cfgMsg, 'Fehler: ' + e.message, 'err');
+  }
+});
+
 async function load(forceRefresh){
   const client = getClient();
   if(forceRefresh) cacheInvalidate('param:');
@@ -94,6 +140,7 @@ function render(){
   document.getElementById('empty').style.display = params.length ? 'none' : 'block';
   document.getElementById('rows').innerHTML = params.map(p => `
     <tr>
+      <td class="num">${p.ParameterID}</td>
       <td>${escapeHtml(p.Name)}</td>
       <td>${escapeHtml(p.Einheit)}</td>
       <td><span class="badge ${Number(p.Active)===1 ? 'on':'off'}">${Number(p.Active)===1 ? 'Aktiv':'Inaktiv'}</span></td>
