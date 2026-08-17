@@ -18,7 +18,7 @@ function setCfg(url, token){
 function requireCfg(){
   const cfg = getCfg();
   if(!cfg || !cfg.url || !cfg.token){
-    window.location.href = 'config.html';
+    window.location.href = 'admin.html';
     throw new Error('Turso nicht konfiguriert');
   }
   return cfg;
