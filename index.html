@@ -20,7 +20,7 @@
 <main>
   <h1>Parameter-Übersicht</h1>
   <div id="msg" class="msg" style="display:none;"></div>
-  <div id="grid" class="grid"></div>
+  <div id="grid"></div>
   <div id="empty" class="empty" style="display:none;">Noch keine aktiven Parameter definiert. <a href="admin.html">Parameter anlegen →</a></div>
   <button id="refreshBtn" class="secondary" style="margin-top:14px;">Aktualisieren</button>
 </main>
@@ -37,8 +37,8 @@ async function load(forceRefresh){
       cacheInvalidate('index:');
     }
 
-    const params = await queryCached(client, 'param:generic:active',
-      "SELECT ParameterID, Name, Einheit FROM seestrasse_parameter WHERE ParaType = 'Generic' AND Active = 1 ORDER BY Name"
+    const params = await queryCached(client, 'param:active_grouped',
+      "SELECT ParameterID, ParaType, Name, Einheit FROM seestrasse_parameter WHERE Active = 1 ORDER BY ParaType, Name"
     );
 
     if(params.length === 0){
@@ -57,16 +57,26 @@ async function load(forceRefresh){
     const latestByParam = {};
     latestRows.forEach(r => { latestByParam[r.ParameterID] = r; });
 
-    grid.innerHTML = params.map(p => {
-      const latest = latestByParam[p.ParameterID];
-      const valueHtml = latest
-        ? `<div class="pvalue">${escapeHtml(latest.Value)} <span class="punit">${escapeHtml(p.Einheit||'')}</span></div>
-           <div class="pdate">${fmtDateTime(latest.Datum)}</div>`
-        : `<div class="pvalue mono" style="color:var(--grey-600);font-size:15px;">– keine Daten –</div>`;
-      return `<a class="param-card" href="parameter.html?id=${p.ParameterID}">
-                <div class="pname">${escapeHtml(p.Name)}</div>
-                ${valueHtml}
-              </a>`;
+    const groups = {};
+    params.forEach(p => {
+      const g = p.ParaType || 'Ohne Gruppe';
+      if(!groups[g]) groups[g] = [];
+      groups[g].push(p);
+    });
+
+    grid.innerHTML = Object.keys(groups).sort().map(groupName => {
+      const cards = groups[groupName].map(p => {
+        const latest = latestByParam[p.ParameterID];
+        const valueHtml = latest
+          ? `<div class="pvalue">${escapeHtml(latest.Value)} <span class="punit">${escapeHtml(p.Einheit||'')}</span></div>
+             <div class="pdate">${fmtDateTime(latest.Datum)}</div>`
+          : `<div class="pvalue mono" style="color:var(--grey-600);font-size:15px;">– keine Daten –</div>`;
+        return `<a class="param-card" href="parameter.html?id=${p.ParameterID}">
+                  <div class="pname">${escapeHtml(p.Name)}</div>
+                  ${valueHtml}
+                </a>`;
+      }).join('');
+      return `<h2 style="margin-top:22px;">${escapeHtml(groupName)}</h2><div class="grid">${cards}</div>`;
     }).join('');
   }catch(e){
     showMsg(msg, 'Fehler beim Laden: ' + e.message, 'err');
