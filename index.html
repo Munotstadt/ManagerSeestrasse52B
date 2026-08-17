@@ -40,9 +40,10 @@ async function load(forceRefresh){
 
     // 'Sensor' und 'ValueType' sind interne Eve-Dimensionsparameter (Raumname / Messgrösse),
     // keine direkt loggbaren Werte — die werden weiter unten als eigene Eve-Karten pro Raum gerendert.
-    const params = await queryCached(client, 'param:active_grouped',
+    const paramsResult = await client.execute(
       "SELECT ParameterID, ParaGroup, Name, Einheit FROM seestrasse_parameter WHERE Active = 1 AND ParaGroup NOT IN ('Sensor','ValueType') ORDER BY ParaGroup, Name"
     );
+    const params = TursoClient.rowsToObjects(paramsResult);
 
     const latestRows = await queryCached(client, 'index:latest', `
       SELECT l.ParameterID, l.Value, l.Datum
@@ -89,19 +90,21 @@ async function load(forceRefresh){
 
 // Baut pro Eve-Raum eine Karte mit aktuellem Temperatur- und Luftfeuchtigkeitswert
 // (statt einzelner generischer "C"/"RelLuft"-Kacheln).
+// Bewusst UNCACHED: diese Liste ändert sich bei jedem Eve-Upload und soll auf der
+// Übersichtsseite immer den aktuellen Stand zeigen, nicht bis zu 60 Min. alten Cache.
 async function buildEveSection(client){
-  const sensors = await queryCached(client, 'param:sensor:all',
+  const sensorsResult = await client.execute(
     "SELECT ParameterID, Name FROM seestrasse_parameter WHERE ParaGroup = 'Sensor' AND Active = 1 ORDER BY Name"
   );
+  const sensors = TursoClient.rowsToObjects(sensorsResult);
   if(sensors.length === 0) return '';
 
-  const valueTypes = await queryCached(client, 'param:valuetype:all',
+  const valueTypesResult = await client.execute(
     "SELECT ParameterID, Name, Einheit FROM seestrasse_parameter WHERE ParaGroup = 'ValueType' AND Active = 1"
   );
-  const vtById = {};
-  valueTypes.forEach(vt => { vtById[vt.ParameterID] = vt; });
+  const valueTypes = TursoClient.rowsToObjects(valueTypesResult);
 
-  const latestEve = await queryCached(client, 'eve:latest_all', `
+  const latestEveResult = await client.execute(`
     SELECT e.SensorParameterID, e.ValueTypeParameterID, e.Value, e.Datum
     FROM seestrasse_eve_data e
     INNER JOIN (
@@ -109,6 +112,7 @@ async function buildEveSection(client){
       FROM seestrasse_eve_data GROUP BY SensorParameterID, ValueTypeParameterID
     ) m ON m.SensorParameterID = e.SensorParameterID AND m.ValueTypeParameterID = e.ValueTypeParameterID AND m.MaxDatum = e.Datum
   `);
+  const latestEve = TursoClient.rowsToObjects(latestEveResult);
   const bySensor = {};
   latestEve.forEach(r => {
     if(!bySensor[r.SensorParameterID]) bySensor[r.SensorParameterID] = {};

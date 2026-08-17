@@ -41,6 +41,7 @@
     <select id="sensorSelect"><option value="">Sensor/Raum wählen …</option></select>
     <button id="refreshSensorsBtn" class="secondary">Aktualisieren</button>
   </div>
+  <div id="sensorCount" style="font-size:12px;color:var(--grey-600);margin:6px 0 14px;"></div>
   <div class="seg-group" id="rangeGroup">
     <button class="seg-btn" data-range="90">90 Tage</button>
     <button class="seg-btn active" data-range="360">360 Tage</button>
@@ -218,7 +219,7 @@ document.getElementById('uploadBtn').addEventListener('click', async () => {
     showMsg(uploadMsg, 'Upload abgeschlossen.', 'ok');
     cacheInvalidate('param:');
     cacheInvalidate('eve:');
-    await loadSensors(true);
+    await loadSensors();
   }catch(e){
     showMsg(uploadMsg, 'Fehler: ' + e.message, 'err');
   }
@@ -226,17 +227,21 @@ document.getElementById('uploadBtn').addEventListener('click', async () => {
 
 /* ---------- Charts ---------- */
 
-async function loadSensors(forceRefresh){
+async function loadSensors(){
+  // Bewusst UNCACHED: nach jedem Upload muss die Raumliste sofort vollständig sein.
   const client = getClient();
-  if(forceRefresh) cacheInvalidate('param:sensor');
-  const sensors = await queryCached(client, 'param:sensor:all',
+  const sensorsResult = await client.execute(
     "SELECT ParameterID, Name, Label FROM seestrasse_parameter WHERE ParaGroup = 'Sensor' ORDER BY Name"
   );
+  const sensors = TursoClient.rowsToObjects(sensorsResult);
   const sel = document.getElementById('sensorSelect');
   const current = sel.value;
   sel.innerHTML = '<option value="">Sensor/Raum wählen …</option>' +
     sensors.map(s => `<option value="${s.ParameterID}">${escapeHtml(s.Name)}</option>`).join('');
   if(current) sel.value = current;
+  document.getElementById('sensorCount').textContent =
+    sensors.length === 0 ? 'Noch keine Räume angelegt.' :
+    `${sensors.length} Raum/Räume: ${sensors.map(s => s.Name).join(', ')}`;
 }
 
 let currentChartsData = []; // [{ label, unit, rows }]
