@@ -36,7 +36,7 @@
     <div id="uploadResults" style="margin-top:14px;"></div>
   </div>
 
-  <h1>Charts pro Sensor/Raum</h1>
+  <h1>Charts pro Eve-Raum</h1>
   <div class="search-bar">
     <select id="sensorSelect"><option value="">Sensor/Raum wählen …</option></select>
     <button id="refreshSensorsBtn" class="secondary">Aktualisieren</button>
@@ -193,7 +193,7 @@ document.getElementById('uploadBtn').addEventListener('click', async () => {
       }
 
       try{
-        const sensorId = await ensureParameter(client, paramCache, 'Sensor', parsed.raum, parsed.raum, null);
+        const sensorId = await ensureParameter(client, paramCache, 'Eve Räume', parsed.raum, parsed.raum, null);
         const valueTypeId = await ensureParameter(client, paramCache, 'ValueType', parsed.valueType, parsed.label, parsed.unit);
         await uploadDailyAverages(client, sensorId, valueTypeId, parsed.dailyAverages, file.name);
 
@@ -231,7 +231,7 @@ async function loadSensors(){
   // Bewusst UNCACHED: nach jedem Upload muss die Raumliste sofort vollständig sein.
   const client = getClient();
   const sensorsResult = await client.execute(
-    "SELECT ParameterID, Name, Label FROM seestrasse_parameter WHERE ParaGroup = 'Sensor' ORDER BY Name"
+    "SELECT ParameterID, Name, Label FROM seestrasse_parameter WHERE ParaGroup = 'Eve Räume' ORDER BY Name"
   );
   const sensors = TursoClient.rowsToObjects(sensorsResult);
   const sel = document.getElementById('sensorSelect');
