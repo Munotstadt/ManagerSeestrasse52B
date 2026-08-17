@@ -105,54 +105,62 @@ function parseEveWorkbook(arrayBuffer, fileName){
 
 /* ---------- DB Helpers ---------- */
 
-// Legt einen internen Eve-Parameter (Raum oder Messgrösse) an, sofern noch nicht vorhanden.
+// Feste Zuordnung der Messgrössen-Parameter (bestehende, im Admin bereits angelegte Parameter).
+// Bewusst NICHT mehr dynamisch per Namens-Match gesucht/angelegt — das führte dazu, dass bei
+// kleinsten Abweichungen ein neuer Duplikat-Parameter erzeugt wurde statt die bestehende
+// ParameterID (5 = Temperatur, 6 = Luftfeuchtigkeit) zu verwenden.
+const VALUE_TYPE_IDS = { C: 5, RelLuft: 6 };
+
+// Legt einen internen Eve-Raum-Parameter an, sofern noch nicht vorhanden (Name-Abgleich
+// bewusst case-/whitespace-insensitiv, damit z.B. "Küche" und "küche " nicht als zwei
+// unterschiedliche Räume angelegt werden).
 // Achtung: 'Name' ist in seestrasse_parameter GLOBAL eindeutig (nicht nur pro ParaGroup) —
 // kollidiert der gewünschte Name mit einem bereits existierenden Parameter aus einer anderen
 // Gruppe (z.B. manuell im Admin angelegt), würde ein normaler INSERT mit "UNIQUE constraint
 // failed: seestrasse_parameter.Name" fehlschlagen. Deshalb wird bei Kollision automatisch
 // ein eindeutiger Name mit Suffix erzeugt, statt den Upload abzubrechen.
-async function ensureParameter(client, cache, paraGroup, name, label, unit){
-  const key = paraGroup + '::' + name;
-  if(cache[key]) return cache[key];
+async function ensureRoomParameter(client, cache, name){
+  const normKey = name.trim().toLowerCase();
+  if(cache[normKey]) return cache[normKey];
 
   const existing = TursoClient.rowsToObjects(await client.execute(
-    'SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = ? AND Name = ?', [paraGroup, name]
+    "SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = 'Eve Räume' AND LOWER(TRIM(Name)) = ?",
+    [normKey]
   ));
   if(existing.length){
-    cache[key] = existing[0].ParameterID;
-    return cache[key];
+    cache[normKey] = existing[0].ParameterID;
+    return cache[normKey];
   }
 
   let finalName = name;
   try{
     await client.execute(
-      "INSERT INTO seestrasse_parameter (ParaGroup, Name, Label, Einheit, Active) VALUES (?, ?, ?, ?, 1)",
-      [paraGroup, finalName, label, unit]
+      "INSERT INTO seestrasse_parameter (ParaGroup, Name, Label, Einheit, Active) VALUES ('Eve Räume', ?, ?, NULL, 1)",
+      [finalName, finalName]
     );
   }catch(err){
     if(!/UNIQUE constraint failed/i.test(err.message)) throw err;
-
-    // Name kollidiert mit einem Parameter aus einer anderen Gruppe. Prüfen, ob evtl. schon
-    // eine passende Eve-Variante mit Suffix existiert (z.B. aus einem früheren Retry).
     finalName = `${name} (Eve)`;
     const existingAlt = TursoClient.rowsToObjects(await client.execute(
-      'SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = ? AND Name = ?', [paraGroup, finalName]
+      "SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = 'Eve Räume' AND LOWER(TRIM(Name)) = ?",
+      [finalName.trim().toLowerCase()]
     ));
     if(existingAlt.length){
-      cache[key] = existingAlt[0].ParameterID;
-      return cache[key];
+      cache[normKey] = existingAlt[0].ParameterID;
+      return cache[normKey];
     }
     await client.execute(
-      "INSERT INTO seestrasse_parameter (ParaGroup, Name, Label, Einheit, Active) VALUES (?, ?, ?, ?, 1)",
-      [paraGroup, finalName, label, unit]
+      "INSERT INTO seestrasse_parameter (ParaGroup, Name, Label, Einheit, Active) VALUES ('Eve Räume', ?, ?, NULL, 1)",
+      [finalName, finalName]
     );
   }
 
   const created = TursoClient.rowsToObjects(await client.execute(
-    'SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = ? AND Name = ?', [paraGroup, finalName]
+    "SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = 'Eve Räume' AND LOWER(TRIM(Name)) = ?",
+    [finalName.trim().toLowerCase()]
   ));
-  cache[key] = created[0].ParameterID;
-  return cache[key];
+  cache[normKey] = created[0].ParameterID;
+  return cache[normKey];
 }
 
 async function uploadDailyAverages(client, sensorId, valueTypeId, dailyAverages, source){
@@ -193,8 +201,11 @@ document.getElementById('uploadBtn').addEventListener('click', async () => {
       }
 
       try{
-        const sensorId = await ensureParameter(client, paramCache, 'Eve Räume', parsed.raum, parsed.raum, null);
-        const valueTypeId = await ensureParameter(client, paramCache, 'ValueType', parsed.valueType, parsed.label, parsed.unit);
+        const sensorId = await ensureRoomParameter(client, paramCache, parsed.raum);
+        const valueTypeId = VALUE_TYPE_IDS[parsed.valueType];
+        if(!valueTypeId){
+          throw new Error(`Unbekannter Messgrössen-Typ "${parsed.valueType}" — keine feste ParameterID hinterlegt.`);
+        }
         await uploadDailyAverages(client, sensorId, valueTypeId, parsed.dailyAverages, file.name);
 
         summaries.push(`
