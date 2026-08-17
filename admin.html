@@ -127,7 +127,7 @@ async function load(forceRefresh){
   const client = getClient();
   if(forceRefresh) cacheInvalidate('param:');
   params = await queryCached(client, 'param:all',
-    "SELECT ParameterID, ParaType, Name, Einheit, Active FROM seestrasse_parameter ORDER BY ParaType, Name"
+    "SELECT ParameterID, ParaGroup, Name, Einheit, Active FROM seestrasse_parameter ORDER BY ParaGroup, Name"
   );
   const cRows = await queryCached(client, 'log:counts_by_param',
     'SELECT ParameterID, COUNT(*) AS cnt FROM seestrasse_log GROUP BY ParameterID'
@@ -139,7 +139,7 @@ async function load(forceRefresh){
 }
 
 function updateGroupOptions(){
-  const groups = [...new Set(params.map(p => p.ParaType).filter(Boolean))].sort();
+  const groups = [...new Set(params.map(p => p.ParaGroup).filter(Boolean))].sort();
   document.getElementById('groupOptions').innerHTML = groups.map(g => `<option value="${escapeHtml(g)}"></option>`).join('');
 }
 
@@ -154,7 +154,7 @@ function render(){
   document.getElementById('rows').innerHTML = params.map(p => `
     <tr>
       <td class="num">${p.ParameterID}</td>
-      <td>${escapeHtml(p.ParaType)}</td>
+      <td>${escapeHtml(p.ParaGroup)}</td>
       <td>${escapeHtml(p.Name)}</td>
       <td>${escapeHtml(p.Einheit)}</td>
       <td><span class="badge ${Number(p.Active)===1 ? 'on':'off'}">${Number(p.Active)===1 ? 'Aktiv':'Inaktiv'}</span></td>
@@ -175,7 +175,7 @@ document.getElementById('addBtn').addEventListener('click', async () => {
   if(!name){ showMsg(addMsg, 'Name ist erforderlich.', 'err'); return; }
   try{
     const client = getClient();
-    await client.execute("INSERT INTO seestrasse_parameter (ParaType, Name, Einheit, Active) VALUES (?, ?, ?, 1)", [group, name, unit || null]);
+    await client.execute("INSERT INTO seestrasse_parameter (ParaGroup, Name, Einheit, Active) VALUES (?, ?, ?, 1)", [group, name, unit || null]);
     showMsg(addMsg, 'Parameter angelegt.', 'ok');
     document.getElementById('n_group').value = '';
     document.getElementById('n_name').value = '';
@@ -192,7 +192,7 @@ window.openEdit = function(id){
   const p = params.find(x => String(x.ParameterID) === String(id));
   if(!p) return;
   document.getElementById('e_id').value = p.ParameterID;
-  document.getElementById('e_group').value = p.ParaType || '';
+  document.getElementById('e_group').value = p.ParaGroup || '';
   document.getElementById('e_name').value = p.Name;
   document.getElementById('e_unit').value = p.Einheit || '';
   document.getElementById('e_active').checked = Number(p.Active) === 1;
@@ -212,7 +212,7 @@ document.getElementById('saveEdit').addEventListener('click', async () => {
   if(!name){ showMsg(editMsg, 'Name ist erforderlich.', 'err'); return; }
   try{
     const client = getClient();
-    await client.execute('UPDATE seestrasse_parameter SET ParaType=?, Name=?, Einheit=?, Active=? WHERE ParameterID=?', [group, name, unit || null, active, Number(id)]);
+    await client.execute('UPDATE seestrasse_parameter SET ParaGroup=?, Name=?, Einheit=?, Active=? WHERE ParameterID=?', [group, name, unit || null, active, Number(id)]);
     dialog.close();
     invalidateAfterParamChange();
     await load();

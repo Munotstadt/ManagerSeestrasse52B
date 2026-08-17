@@ -38,7 +38,7 @@ async function load(forceRefresh){
     }
 
     const params = await queryCached(client, 'param:active_grouped',
-      "SELECT ParameterID, ParaType, Name, Einheit FROM seestrasse_parameter WHERE Active = 1 ORDER BY ParaType, Name"
+      "SELECT ParameterID, ParaGroup, Name, Einheit FROM seestrasse_parameter WHERE Active = 1 ORDER BY ParaGroup, Name"
     );
 
     if(params.length === 0){
@@ -59,7 +59,7 @@ async function load(forceRefresh){
 
     const groups = {};
     params.forEach(p => {
-      const g = p.ParaType || 'Ohne Gruppe';
+      const g = p.ParaGroup || 'Ohne Gruppe';
       if(!groups[g]) groups[g] = [];
       groups[g].push(p);
     });

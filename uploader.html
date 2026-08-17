@@ -258,19 +258,19 @@ async function loadParamOptions() {
   try {
     const client = getClient();
     allParams = await queryCached(client, 'param:all_for_upload',
-      "SELECT ParameterID, Name, Einheit, ParaType FROM seestrasse_parameter WHERE Active = 1 ORDER BY ParaType, Name"
+      "SELECT ParameterID, Name, Einheit, ParaGroup FROM seestrasse_parameter WHERE Active = 1 ORDER BY ParaGroup, Name"
     );
   } catch (e) {
     showMsg(document.getElementById('manualMsg'), 'Parameter konnten nicht geladen werden: ' + e.message, 'err');
     return;
   }
-  const groups = [...new Set(allParams.map(p => p.ParaType))];
+  const groups = [...new Set(allParams.map(p => p.ParaGroup))];
   manualGroupSel.innerHTML = groups.map(g => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
   renderParamOptions(groups[0]);
 }
 
 function renderParamOptions(group) {
-  const list = allParams.filter(p => p.ParaType === group);
+  const list = allParams.filter(p => p.ParaGroup === group);
   manualParamSel.innerHTML = list.map(p =>
     `<option value="${p.ParameterID}">${escapeHtml(p.Name)}${p.Einheit ? ' (' + escapeHtml(p.Einheit) + ')' : ''} — ID ${p.ParameterID}</option>`
   ).join('');
