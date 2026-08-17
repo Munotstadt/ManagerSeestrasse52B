@@ -38,10 +38,10 @@ async function load(forceRefresh){
       cacheInvalidate('eve:');
     }
 
-    // 'Sensor' und 'ValueType' sind interne Eve-Dimensionsparameter (Raumname / Messgrösse),
+    // 'Eve Räume' und 'ValueType' sind interne Eve-Dimensionsparameter (Raumname / Messgrösse),
     // keine direkt loggbaren Werte — die werden weiter unten als eigene Eve-Karten pro Raum gerendert.
     const paramsResult = await client.execute(
-      "SELECT ParameterID, ParaGroup, Name, Einheit FROM seestrasse_parameter WHERE Active = 1 AND ParaGroup NOT IN ('Sensor','ValueType') ORDER BY ParaGroup, Name"
+      "SELECT ParameterID, ParaGroup, Name, Einheit FROM seestrasse_parameter WHERE Active = 1 AND ParaGroup NOT IN ('Eve Räume','ValueType') ORDER BY ParaGroup, Name"
     );
     const params = TursoClient.rowsToObjects(paramsResult);
 
@@ -93,17 +93,6 @@ async function load(forceRefresh){
 // Bewusst UNCACHED: diese Liste ändert sich bei jedem Eve-Upload und soll auf der
 // Übersichtsseite immer den aktuellen Stand zeigen, nicht bis zu 60 Min. alten Cache.
 async function buildEveSection(client){
-  const sensorsResult = await client.execute(
-    "SELECT ParameterID, Name FROM seestrasse_parameter WHERE ParaGroup = 'Sensor' AND Active = 1 ORDER BY Name"
-  );
-  const sensors = TursoClient.rowsToObjects(sensorsResult);
-  if(sensors.length === 0) return '';
-
-  const valueTypesResult = await client.execute(
-    "SELECT ParameterID, Name, Einheit FROM seestrasse_parameter WHERE ParaGroup = 'ValueType' AND Active = 1"
-  );
-  const valueTypes = TursoClient.rowsToObjects(valueTypesResult);
-
   const latestEveResult = await client.execute(`
     SELECT e.SensorParameterID, e.ValueTypeParameterID, e.Value, e.Datum
     FROM seestrasse_eve_data e
@@ -113,6 +102,38 @@ async function buildEveSection(client){
     ) m ON m.SensorParameterID = e.SensorParameterID AND m.ValueTypeParameterID = e.ValueTypeParameterID AND m.MaxDatum = e.Datum
   `);
   const latestEve = TursoClient.rowsToObjects(latestEveResult);
+  if(latestEve.length === 0) return '';
+
+  // Raum-Karten werden aus den tatsächlich in seestrasse_eve_data vorkommenden
+  // SensorParameterID-Werten gebaut (nicht aus seestrasse_parameter WHERE ParaGroup=...),
+  // damit die angezeigte ID immer exakt der SensorParameterID der Messdaten entspricht.
+  const sensorIds = [...new Set(latestEve.map(r => Number(r.SensorParameterID)))];
+  let sensorNameById = {};
+  if(sensorIds.length){
+    const sPlaceholders = sensorIds.map(() => '?').join(',');
+    const sensorNamesResult = await client.execute(
+      `SELECT ParameterID, Name FROM seestrasse_parameter WHERE ParameterID IN (${sPlaceholders})`,
+      sensorIds
+    );
+    TursoClient.rowsToObjects(sensorNamesResult).forEach(p => { sensorNameById[Number(p.ParameterID)] = p.Name; });
+  }
+  const sensors = sensorIds.map(id => ({ ParameterID: id, Name: sensorNameById[id] || `Parameter ${id}` }))
+    .sort((a,b) => a.Name.localeCompare(b.Name));
+
+  // ValueType-Parameter (Temperatur/Luftfeuchtigkeit) werden datengetrieben ermittelt
+  // (über die tatsächlich in seestrasse_eve_data vorkommenden IDs), statt eine feste
+  // ParaGroup-Bezeichnung wie 'ValueType' anzunehmen — deren genauer Name war zuvor
+  // nicht zuverlässig und liess die Werte auf Übersicht/Charts verschwinden.
+  const vtIds = [...new Set(latestEve.map(r => Number(r.ValueTypeParameterID)))];
+  let vtById = {};
+  if(vtIds.length){
+    const placeholders = vtIds.map(() => '?').join(',');
+    const vtParamsResult = await client.execute(
+      `SELECT ParameterID, Name, Einheit FROM seestrasse_parameter WHERE ParameterID IN (${placeholders})`,
+      vtIds
+    );
+    TursoClient.rowsToObjects(vtParamsResult).forEach(vt => { vtById[Number(vt.ParameterID)] = vt; });
+  }
   const bySensor = {};
   latestEve.forEach(r => {
     if(!bySensor[r.SensorParameterID]) bySensor[r.SensorParameterID] = {};
@@ -121,9 +142,10 @@ async function buildEveSection(client){
 
   const cards = sensors.map(s => {
     const readings = bySensor[s.ParameterID] || {};
-    const parts = valueTypes.map(vt => {
-      const r = readings[vt.ParameterID];
+    const parts = vtIds.map(vtId => {
+      const r = readings[vtId];
       if(!r) return '';
+      const vt = vtById[vtId] || {};
       return `<div class="pvalue" style="font-size:17px;">${escapeHtml(r.Value)}<span class="punit"> ${escapeHtml(vt.Einheit||'')}</span></div>`;
     }).filter(Boolean).join('');
     const anyReading = Object.values(readings)[0];

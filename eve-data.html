@@ -229,11 +229,33 @@ document.getElementById('uploadBtn').addEventListener('click', async () => {
 
 async function loadSensors(){
   // Bewusst UNCACHED: nach jedem Upload muss die Raumliste sofort vollständig sein.
+  //
+  // Wichtig: das Dropdown wird direkt aus den tatsächlich in seestrasse_eve_data
+  // vorkommenden SensorParameterID-Werten gebaut (nicht aus seestrasse_parameter
+  // WHERE ParaGroup='Eve Räume'). So ist garantiert, dass der Dropdown-Wert exakt
+  // der SensorParameterID entspricht, mit der die Charts abgefragt werden — auch
+  // falls ein Raum in seestrasse_parameter mehrfach oder inkonsistent angelegt wurde.
   const client = getClient();
-  const sensorsResult = await client.execute(
-    "SELECT ParameterID, Name, Label FROM seestrasse_parameter WHERE ParaGroup = 'Eve Räume' ORDER BY Name"
+  const idsResult = await client.execute(
+    'SELECT DISTINCT SensorParameterID FROM seestrasse_eve_data ORDER BY SensorParameterID'
   );
-  const sensors = TursoClient.rowsToObjects(sensorsResult);
+  const ids = TursoClient.rowsToObjects(idsResult).map(r => Number(r.SensorParameterID));
+
+  let namesById = {};
+  if(ids.length){
+    const placeholders = ids.map(() => '?').join(',');
+    const namesResult = await client.execute(
+      `SELECT ParameterID, Name, Label FROM seestrasse_parameter WHERE ParameterID IN (${placeholders})`,
+      ids
+    );
+    TursoClient.rowsToObjects(namesResult).forEach(p => { namesById[Number(p.ParameterID)] = p; });
+  }
+
+  const sensors = ids.map(id => ({
+    ParameterID: id,
+    Name: namesById[id]?.Name || `Parameter ${id}`
+  })).sort((a,b) => a.Name.localeCompare(b.Name));
+
   const sel = document.getElementById('sensorSelect');
   const current = sel.value;
   sel.innerHTML = '<option value="">Sensor/Raum wählen …</option>' +
@@ -255,15 +277,38 @@ document.getElementById('sensorSelect').addEventListener('change', async (ev) =>
   if(!sensorId) return;
   try{
     const client = getClient();
-    const valueTypes = await queryCached(client, 'param:valuetype:all',
-      "SELECT ParameterID, Name, Label, Einheit FROM seestrasse_parameter WHERE ParaGroup = 'ValueType' ORDER BY Name"
-    );
 
-    for(const vt of valueTypes){
-      const rows = await queryCached(client, `eve:by_sensor_valuetype:${sensorId}:${vt.ParameterID}`,
+    // Robust gegenüber der genauen ParaGroup-Bezeichnung der Messgrössen-Parameter:
+    // wir ermitteln direkt aus den vorhandenen Daten, welche ValueTypeParameterID(s)
+    // für diesen Raum existieren, statt eine feste Gruppe wie 'ValueType' anzunehmen.
+    const vtIdsResult = await client.execute(
+      'SELECT DISTINCT ValueTypeParameterID FROM seestrasse_eve_data WHERE SensorParameterID = ?',
+      [Number(sensorId)]
+    );
+    const vtIds = TursoClient.rowsToObjects(vtIdsResult).map(r => Number(r.ValueTypeParameterID));
+
+    if(vtIds.length === 0){
+      showMsg(chartsMsg, 'Für diesen Raum sind keine Messwerte vorhanden.', 'err');
+      return;
+    }
+    chartsMsg.style.display = 'none';
+
+    const placeholders = vtIds.map(() => '?').join(',');
+    const vtParamsResult = await client.execute(
+      `SELECT ParameterID, Name, Label, Einheit FROM seestrasse_parameter WHERE ParameterID IN (${placeholders})`,
+      vtIds
+    );
+    const vtParams = TursoClient.rowsToObjects(vtParamsResult);
+    const vtById = {};
+    vtParams.forEach(vt => { vtById[Number(vt.ParameterID)] = vt; });
+
+    for(const vtId of vtIds){
+      const vt = vtById[vtId] || { Name: `Parameter ${vtId}`, Label: `Parameter ${vtId}`, Einheit: '' };
+      const rowsResult = await client.execute(
         'SELECT Datum, Value FROM seestrasse_eve_data WHERE SensorParameterID = ? AND ValueTypeParameterID = ? ORDER BY Datum ASC',
-        [Number(sensorId), vt.ParameterID]
+        [Number(sensorId), vtId]
       );
+      const rows = TursoClient.rowsToObjects(rowsResult);
       currentChartsData.push({ label: vt.Label || vt.Name, unit: vt.Einheit || '', rows });
     }
     renderAllCharts();
