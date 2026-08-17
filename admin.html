@@ -108,6 +108,7 @@ document.getElementById('saveCfgBtn').addEventListener('click', () => {
   if(!url || !token){ showMsg(cfgMsg, 'Bitte URL und Token angeben.', 'err'); return; }
   setCfg(url, token);
   showMsg(cfgMsg, 'Gespeichert.', 'ok');
+  load().catch(e => showMsg(listMsg, 'Fehler beim Laden: ' + e.message, 'err'));
 });
 
 document.getElementById('testCfgBtn').addEventListener('click', async () => {
@@ -240,7 +241,14 @@ window.delParam = async function(id){
 
 document.getElementById('refreshBtn').addEventListener('click', () => load(true));
 
-load().catch(e => showMsg(listMsg, 'Fehler beim Laden: ' + e.message, 'err'));
+// Wichtig: bei fehlender Config NICHT automatisch laden — sonst löst getClient()/requireCfg()
+// einen Redirect auf admin.html aus, was hier zum sofortigen Reload führt und die gerade
+// eingegebenen URL/Token-Werte wieder löscht, bevor "Speichern" geklickt werden kann.
+if(getCfg()){
+  load().catch(e => showMsg(listMsg, 'Fehler beim Laden: ' + e.message, 'err'));
+}else{
+  showMsg(listMsg, 'Bitte zuerst unten die Turso-Verbindung eingeben und speichern.', 'err');
+}
 </script>
 </body>
 </html>

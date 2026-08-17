@@ -108,18 +108,18 @@ async function ensureParameter(client, cache, paraType, name, label, unit){
   const key = paraType + '::' + name;
   if(cache[key]) return cache[key];
   const existing = TursoClient.rowsToObjects(await client.execute(
-    'SELECT ParameterID FROM seestrasse_parameter WHERE ParaType = ? AND Name = ?', [paraType, name]
+    'SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = ? AND Name = ?', [paraType, name]
   ));
   if(existing.length){
     cache[key] = existing[0].ParameterID;
     return cache[key];
   }
   await client.execute(
-    "INSERT INTO seestrasse_parameter (ParaType, Name, Label, Einheit, Active) VALUES (?, ?, ?, ?, 1)",
+    "INSERT INTO seestrasse_parameter (ParaGroup, Name, Label, Einheit, Active) VALUES (?, ?, ?, ?, 1)",
     [paraType, name, label, unit]
   );
   const created = TursoClient.rowsToObjects(await client.execute(
-    'SELECT ParameterID FROM seestrasse_parameter WHERE ParaType = ? AND Name = ?', [paraType, name]
+    'SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = ? AND Name = ?', [paraType, name]
   ));
   cache[key] = created[0].ParameterID;
   return cache[key];
@@ -193,7 +193,7 @@ async function loadSensors(forceRefresh){
   const client = getClient();
   if(forceRefresh) cacheInvalidate('param:sensor');
   const sensors = await queryCached(client, 'param:sensor:all',
-    "SELECT ParameterID, Name, Label FROM seestrasse_parameter WHERE ParaType = 'Sensor' ORDER BY Name"
+    "SELECT ParameterID, Name, Label FROM seestrasse_parameter WHERE ParaGroup = 'Sensor' ORDER BY Name"
   );
   const sel = document.getElementById('sensorSelect');
   const current = sel.value;
@@ -214,7 +214,7 @@ document.getElementById('sensorSelect').addEventListener('change', async (ev) =>
   try{
     const client = getClient();
     const valueTypes = await queryCached(client, 'param:valuetype:all',
-      "SELECT ParameterID, Name, Label, Einheit FROM seestrasse_parameter WHERE ParaType = 'ValueType' ORDER BY Name"
+      "SELECT ParameterID, Name, Label, Einheit FROM seestrasse_parameter WHERE ParaGroup = 'ValueType' ORDER BY Name"
     );
 
     for(const vt of valueTypes){

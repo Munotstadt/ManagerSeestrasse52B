@@ -35,16 +35,14 @@ async function load(forceRefresh){
     if(forceRefresh){
       cacheInvalidate('param:');
       cacheInvalidate('index:');
+      cacheInvalidate('eve:');
     }
 
+    // 'Sensor' und 'ValueType' sind interne Eve-Dimensionsparameter (Raumname / Messgrösse),
+    // keine direkt loggbaren Werte — die werden weiter unten als eigene Eve-Karten pro Raum gerendert.
     const params = await queryCached(client, 'param:active_grouped',
-      "SELECT ParameterID, ParaGroup, Name, Einheit FROM seestrasse_parameter WHERE Active = 1 ORDER BY ParaGroup, Name"
+      "SELECT ParameterID, ParaGroup, Name, Einheit FROM seestrasse_parameter WHERE Active = 1 AND ParaGroup NOT IN ('Sensor','ValueType') ORDER BY ParaGroup, Name"
     );
-
-    if(params.length === 0){
-      document.getElementById('empty').style.display = 'block';
-      return;
-    }
 
     const latestRows = await queryCached(client, 'index:latest', `
       SELECT l.ParameterID, l.Value, l.Datum
@@ -64,7 +62,7 @@ async function load(forceRefresh){
       groups[g].push(p);
     });
 
-    grid.innerHTML = Object.keys(groups).sort().map(groupName => {
+    let html = Object.keys(groups).sort().map(groupName => {
       const cards = groups[groupName].map(p => {
         const latest = latestByParam[p.ParameterID];
         const valueHtml = latest
@@ -78,9 +76,63 @@ async function load(forceRefresh){
       }).join('');
       return `<h2 style="margin-top:22px;">${escapeHtml(groupName)}</h2><div class="grid">${cards}</div>`;
     }).join('');
+
+    const eveHtml = await buildEveSection(client);
+    html += eveHtml;
+
+    grid.innerHTML = html;
+    document.getElementById('empty').style.display = (params.length === 0 && !eveHtml) ? 'block' : 'none';
   }catch(e){
     showMsg(msg, 'Fehler beim Laden: ' + e.message, 'err');
   }
+}
+
+// Baut pro Eve-Raum eine Karte mit aktuellem Temperatur- und Luftfeuchtigkeitswert
+// (statt einzelner generischer "C"/"RelLuft"-Kacheln).
+async function buildEveSection(client){
+  const sensors = await queryCached(client, 'param:sensor:all',
+    "SELECT ParameterID, Name FROM seestrasse_parameter WHERE ParaGroup = 'Sensor' AND Active = 1 ORDER BY Name"
+  );
+  if(sensors.length === 0) return '';
+
+  const valueTypes = await queryCached(client, 'param:valuetype:all',
+    "SELECT ParameterID, Name, Einheit FROM seestrasse_parameter WHERE ParaGroup = 'ValueType' AND Active = 1"
+  );
+  const vtById = {};
+  valueTypes.forEach(vt => { vtById[vt.ParameterID] = vt; });
+
+  const latestEve = await queryCached(client, 'eve:latest_all', `
+    SELECT e.SensorParameterID, e.ValueTypeParameterID, e.Value, e.Datum
+    FROM seestrasse_eve_data e
+    INNER JOIN (
+      SELECT SensorParameterID, ValueTypeParameterID, MAX(Datum) AS MaxDatum
+      FROM seestrasse_eve_data GROUP BY SensorParameterID, ValueTypeParameterID
+    ) m ON m.SensorParameterID = e.SensorParameterID AND m.ValueTypeParameterID = e.ValueTypeParameterID AND m.MaxDatum = e.Datum
+  `);
+  const bySensor = {};
+  latestEve.forEach(r => {
+    if(!bySensor[r.SensorParameterID]) bySensor[r.SensorParameterID] = {};
+    bySensor[r.SensorParameterID][r.ValueTypeParameterID] = r;
+  });
+
+  const cards = sensors.map(s => {
+    const readings = bySensor[s.ParameterID] || {};
+    const parts = valueTypes.map(vt => {
+      const r = readings[vt.ParameterID];
+      if(!r) return '';
+      return `<div class="pvalue" style="font-size:17px;">${escapeHtml(r.Value)}<span class="punit"> ${escapeHtml(vt.Einheit||'')}</span></div>`;
+    }).filter(Boolean).join('');
+    const anyReading = Object.values(readings)[0];
+    const dateHtml = anyReading ? `<div class="pdate">${fmtDate(anyReading.Datum)}</div>` : '';
+    const body = parts || `<div class="pvalue mono" style="color:var(--grey-600);font-size:15px;">– keine Daten –</div>`;
+    return `<div class="param-card">
+              <div class="pname">${escapeHtml(s.Name)}</div>
+              ${body}
+              ${dateHtml}
+            </div>`;
+  }).join('');
+
+  return `<h2 style="margin-top:22px;">Eve</h2><div class="grid">${cards}</div>`;
 }
 document.getElementById('refreshBtn').addEventListener('click', () => load(true));
 load();
