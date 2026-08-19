@@ -144,20 +144,22 @@ async function buildEveSection(client){
     const readings = bySensor[s.ParameterID] || {};
     const parts = vtIds.map(vtId => {
       const r = readings[vtId];
-      if(!r) return '';
+      if(!r) return null;
       const vt = vtById[vtId] || {};
-      return `<div class="pvalue" style="font-size:17px;">${escapeHtml(r.Value)}<span class="punit"> ${escapeHtml(vt.Einheit||'')}</span></div>`;
-    }).filter(Boolean).join('');
+      const rounded = Math.round(Number(r.Value) * 10) / 10;
+      return `${rounded.toFixed(1)} ${escapeHtml(vt.Einheit||'')}`.trim();
+    }).filter(Boolean);
+    if(parts.length === 0) return ''; // Raum ohne jegliche Werte: Kachel weglassen
     const anyReading = Object.values(readings)[0];
     const dateHtml = anyReading ? `<div class="pdate">${fmtDate(anyReading.Datum)}</div>` : '';
-    const body = parts || `<div class="pvalue mono" style="color:var(--grey-600);font-size:15px;">– keine Daten –</div>`;
     return `<div class="param-card">
               <div class="pname">${escapeHtml(s.Name)}</div>
-              ${body}
+              <div class="pvalue" style="font-size:17px;">${parts.join(' / ')}</div>
               ${dateHtml}
             </div>`;
-  }).join('');
+  }).filter(Boolean).join('');
 
+  if(!cards) return '';
   return `<h2 style="margin-top:22px;">Eve</h2><div class="grid">${cards}</div>`;
 }
 document.getElementById('refreshBtn').addEventListener('click', () => load(true));

@@ -6,6 +6,7 @@
 <title>Seestrasse 52B · Uploader</title>
 <link rel="stylesheet" href="assets/style.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   .tabs2 { display: flex; gap: 4px; border-bottom: 1px solid var(--grey-300); margin: 18px 0 20px; }
   .tab2 {
@@ -118,38 +119,20 @@
   <!-- ============ EVE UPLOAD ============ -->
   <div class="panel2" id="panel-eve">
     <div class="card" style="margin-bottom:20px;">
-      <h2 style="font-size:15px;">EveData-Export wählen</h2>
-      <div class="assumption">
-        Annahme: EveData-Export ist CSV mit Spalten <span class="mono">Date, ParameterID, Value, Comment</span>.
-        Falls das reale Exportformat abweicht, bitte <span class="mono">EVE_COLUMN_MAP</span> im Script anpassen.
+      <h2 style="font-size:15px;">Eve Weather · Upload</h2>
+      <p style="color:var(--grey-600);font-size:13px;">
+        Eve-Export-Dateien (.xlsx) auswählen — Temperatur- und Luftfeuchtigkeit-Dateien können gemischt
+        und für mehrere Räume gleichzeitig hochgeladen werden. Pro Tag wird der Durchschnitt berechnet;
+        Tage mit weniger als <span id="minRowsLabel" class="mono"></span> Messungen werden übersprungen.
+        Ein erneuter Upload überschreibt bereits vorhandene Tage automatisch (kein Duplikat).
+      </p>
+      <div class="field">
+        <label for="eveFileInput">Eve-Export-Dateien (.xlsx)</label>
+        <input id="eveFileInput" type="file" accept=".xlsx" multiple>
       </div>
-      <div class="dropzone" id="eveDropzone">
-        <p><strong>CSV-Datei hierher ziehen</strong> oder klicken zum Auswählen</p>
-        <div class="filename" id="eveFilename"></div>
-      </div>
-      <input type="file" id="eveFileInput" accept=".csv">
-    </div>
-
-    <div class="card" id="eveResultCard" style="display:none;">
-      <h2 style="font-size:15px;">Prüfung</h2>
-      <div class="stats">
-        <div><span>Zeilen in Datei</span><b id="eveStRows">0</b></div>
-        <div class="ok"><span>Gültige Einträge</span><b id="eveStValid">0</b></div>
-        <div class="err"><span>Duplikate</span><b id="eveStDupes">0</b></div>
-        <div class="err"><span>Fehlerhafte Zeilen</span><b id="eveStInvalid">0</b></div>
-      </div>
-      <div id="eveErrorSection" style="display:none;"><div class="msg err" id="eveErrList" style="margin-top:12px;"></div></div>
-      <div class="tablewrap">
-        <table>
-          <thead><tr><th>Datum</th><th>ParameterID</th><th>Value</th><th>Comment</th><th>Source</th></tr></thead>
-          <tbody id="evePreviewBody"></tbody>
-        </table>
-      </div>
-      <div class="actions">
-        <button id="btnEveUpload" disabled>Importieren</button>
-      </div>
-      <div id="eveMsg" class="msg" style="display:none;margin-top:10px;"></div>
-      <div class="import-progress" id="eveProgress"></div>
+      <button id="eveUploadBtn">Hochladen &amp; verarbeiten</button>
+      <div id="eveUploadMsg" class="msg" style="display:none;margin-top:12px;"></div>
+      <div id="eveUploadResults" style="margin-top:14px;"></div>
     </div>
   </div>
 
@@ -334,64 +317,179 @@ document.getElementById('btnManualUpload').addEventListener('click', async () =>
   }
 });
 
-/* ===================== EVE UPLOAD ===================== */
-const EVE_COLUMN_MAP = { date: 'Date', paramId: 'ParameterID', value: 'Value', comment: 'Comment' };
-const EVE_SOURCE = 'EveData';
-let eveEntries = [];
+/* ===================== EVE UPLOAD (1:1 aus eve-data.html) ===================== */
+const MIN_ROWS_PER_DAY = 115;
+document.getElementById('minRowsLabel').textContent = MIN_ROWS_PER_DAY;
 
-setupDropzone('eveDropzone', 'eveFileInput', 'eveFilename', handleEveFile);
+function parseEveWorkbook(arrayBuffer, fileName){
+  const wb = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
 
-function handleEveFile(file) {
-  const reader = new FileReader();
-  reader.onload = evt => processEveCsv(evt.target.result);
-  reader.readAsText(file, 'utf-8');
+  const raumLine = String(rows[1]?.[0] || '');
+  const raum = raumLine.replace(/^Raum:\s*/i, '').trim();
+  if(!raum) throw new Error(`${fileName}: Raum-Zeile nicht gefunden (Zeile 2 erwartet "Raum: ...").`);
+
+  const headerLine = String(rows[3]?.[1] || '');
+  let valueType, unit, label;
+  if(/Celsius/i.test(headerLine)){
+    valueType = 'C'; unit = '°C'; label = 'Temperatur (°C)';
+  }else if(/Luftfeuchtigkeit/i.test(headerLine)){
+    valueType = 'RelLuft'; unit = '%'; label = 'Luftfeuchtigkeit (%)';
+  }else{
+    throw new Error(`${fileName}: unbekannte Spalte "${headerLine}" (erwartet Temperatur/Celsius oder Luftfeuchtigkeit).`);
+  }
+
+  const byDay = {};
+  for(let i = 4; i < rows.length; i++){
+    const r = rows[i];
+    if(!r || r[0] == null || r[1] == null) continue;
+    const d = r[0] instanceof Date ? r[0] : new Date(r[0]);
+    if(isNaN(d)) continue;
+    const dayKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    (byDay[dayKey] = byDay[dayKey] || []).push(Number(r[1]));
+  }
+
+  const dailyAverages = [];
+  let skipped = 0;
+  for(const [day, vals] of Object.entries(byDay)){
+    if(vals.length < MIN_ROWS_PER_DAY){ skipped++; continue; }
+    const avg = vals.reduce((a,b) => a+b, 0) / vals.length;
+    dailyAverages.push({ day, value: Math.round(avg * 100) / 100, count: vals.length });
+  }
+  dailyAverages.sort((a,b) => a.day.localeCompare(b.day));
+
+  return { raum, valueType, unit, label, dailyAverages, totalDays: Object.keys(byDay).length, skippedDays: skipped };
 }
 
-function processEveCsv(text) {
-  const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
-  const rows = parsed.data;
-  const entries = [];
-  const errors = [];
+/* ---------- DB Helpers ---------- */
 
-  rows.forEach((row, idx) => {
-    const lineNo = idx + 2;
-    const rawDate = row[EVE_COLUMN_MAP.date];
-    const paramId = row[EVE_COLUMN_MAP.paramId];
-    const value = row[EVE_COLUMN_MAP.value];
-    const comment = row[EVE_COLUMN_MAP.comment] || '';
+// Feste Zuordnung der Messgrössen-Parameter (bestehende, im Admin bereits angelegte Parameter).
+// Bewusst NICHT mehr dynamisch per Namens-Match gesucht/angelegt — das führte dazu, dass bei
+// kleinsten Abweichungen ein neuer Duplikat-Parameter erzeugt wurde statt die bestehende
+// ParameterID (5 = Temperatur, 6 = Luftfeuchtigkeit) zu verwenden.
+const VALUE_TYPE_IDS = { C: 5, RelLuft: 6 };
 
-    if (!rawDate || isNaN(Date.parse(rawDate))) {
-      errors.push(`Zeile ${lineNo}: ungültiges Datum ("${rawDate}")`);
-      return;
+// Legt einen internen Eve-Raum-Parameter an, sofern noch nicht vorhanden (Name-Abgleich
+// bewusst case-/whitespace-insensitiv, damit z.B. "Küche" und "küche " nicht als zwei
+// unterschiedliche Räume angelegt werden).
+// Achtung: 'Name' ist in seestrasse_parameter GLOBAL eindeutig (nicht nur pro ParaGroup) —
+// kollidiert der gewünschte Name mit einem bereits existierenden Parameter aus einer anderen
+// Gruppe (z.B. manuell im Admin angelegt), würde ein normaler INSERT mit "UNIQUE constraint
+// failed: seestrasse_parameter.Name" fehlschlagen. Deshalb wird bei Kollision automatisch
+// ein eindeutiger Name mit Suffix erzeugt, statt den Upload abzubrechen.
+async function ensureRoomParameter(client, cache, name){
+  const normKey = name.trim().toLowerCase();
+  if(cache[normKey]) return cache[normKey];
+
+  const existing = TursoClient.rowsToObjects(await client.execute(
+    "SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = 'Eve Räume' AND LOWER(TRIM(Name)) = ?",
+    [normKey]
+  ));
+  if(existing.length){
+    cache[normKey] = existing[0].ParameterID;
+    return cache[normKey];
+  }
+
+  let finalName = name;
+  try{
+    await client.execute(
+      "INSERT INTO seestrasse_parameter (ParaGroup, Name, Label, Einheit, Active) VALUES ('Eve Räume', ?, ?, NULL, 1)",
+      [finalName, finalName]
+    );
+  }catch(err){
+    if(!/UNIQUE constraint failed/i.test(err.message)) throw err;
+    finalName = `${name} (Eve)`;
+    const existingAlt = TursoClient.rowsToObjects(await client.execute(
+      "SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = 'Eve Räume' AND LOWER(TRIM(Name)) = ?",
+      [finalName.trim().toLowerCase()]
+    ));
+    if(existingAlt.length){
+      cache[normKey] = existingAlt[0].ParameterID;
+      return cache[normKey];
     }
-    if (!paramId || isNaN(Number(paramId))) {
-      errors.push(`Zeile ${lineNo}: ungültige ParameterID ("${paramId}")`);
-      return;
-    }
-    if (value === undefined || value === '' || isNaN(Number(value))) {
-      errors.push(`Zeile ${lineNo}: ungültiger Value ("${value}")`);
-      return;
-    }
-    entries.push({ Datum: nowISOFromDate(new Date(rawDate)), ParameterID: Number(paramId), Value: Number(value), Comment: comment, Source: EVE_SOURCE });
-  });
+    await client.execute(
+      "INSERT INTO seestrasse_parameter (ParaGroup, Name, Label, Einheit, Active) VALUES ('Eve Räume', ?, ?, NULL, 1)",
+      [finalName, finalName]
+    );
+  }
 
-  const dupeKeys = findDupeKeySet(entries);
-  dupeKeys.forEach(key => errors.push(`Duplikat: Datum+ParameterID "${key}" kommt mehrfach in der Datei vor.`));
-
-  eveEntries = entries;
-  renderGenericResult({ prefix: 'eve', totalCount: rows.length, entries, dupeKeys, errors, totalKey: 'Rows' });
+  const created = TursoClient.rowsToObjects(await client.execute(
+    "SELECT ParameterID FROM seestrasse_parameter WHERE ParaGroup = 'Eve Räume' AND LOWER(TRIM(Name)) = ?",
+    [finalName.trim().toLowerCase()]
+  ));
+  cache[normKey] = created[0].ParameterID;
+  return cache[normKey];
 }
 
-document.getElementById('btnEveUpload').addEventListener('click', async () => {
-  const dupeKeys = findDupeKeySet(eveEntries);
-  const valid = eveEntries.filter(e => !dupeKeys.has(e.Datum+'|'+e.ParameterID));
-  const btn = document.getElementById('btnEveUpload');
-  btn.disabled = true;
-  const result = await importEntries(valid, document.getElementById('eveProgress'));
-  renderImportResult(document.getElementById('eveMsg'), result);
-  cacheInvalidate('log:');
-  cacheInvalidate('index:');
-  if (result.failed > 0) btn.disabled = false;
+async function uploadDailyAverages(client, sensorId, valueTypeId, dailyAverages, source){
+  const createdAt = nowISO();
+  for(const d of dailyAverages){
+    await client.execute(
+      `INSERT INTO seestrasse_eve_data (Datum, SensorParameterID, ValueTypeParameterID, Value, Source, CreatedAt)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(Datum, SensorParameterID, ValueTypeParameterID)
+       DO UPDATE SET Value = excluded.Value, Source = excluded.Source, CreatedAt = excluded.CreatedAt`,
+      [d.day, sensorId, valueTypeId, d.value, source, createdAt]
+    );
+  }
+}
+
+document.getElementById('eveUploadBtn').addEventListener('click', async () => {
+  const files = document.getElementById('eveFileInput').files;
+  const uploadMsg = document.getElementById('eveUploadMsg');
+  const uploadResults = document.getElementById('eveUploadResults');
+  if(!files || files.length === 0){ showMsg(uploadMsg, 'Bitte mindestens eine Datei auswählen.', 'err'); return; }
+
+  uploadResults.innerHTML = '';
+  showMsg(uploadMsg, `Verarbeite ${files.length} Datei(en) …`, 'ok');
+
+  try{
+    const client = getClient();
+    const paramCache = {};
+    const summaries = [];
+
+    for(const file of files){
+      const buf = await file.arrayBuffer();
+      let parsed;
+      try{
+        parsed = parseEveWorkbook(buf, file.name);
+      }catch(e){
+        summaries.push(`<div class="msg err">${escapeHtml(file.name)}: ${escapeHtml(e.message)}</div>`);
+        continue;
+      }
+
+      try{
+        const sensorId = await ensureRoomParameter(client, paramCache, parsed.raum);
+        const valueTypeId = VALUE_TYPE_IDS[parsed.valueType];
+        if(!valueTypeId){
+          throw new Error(`Unbekannter Messgrössen-Typ "${parsed.valueType}" — keine feste ParameterID hinterlegt.`);
+        }
+        await uploadDailyAverages(client, sensorId, valueTypeId, parsed.dailyAverages, file.name);
+
+        summaries.push(`
+          <div class="card" style="margin-bottom:10px;">
+            <strong>${escapeHtml(file.name)}</strong><br>
+            <span style="font-size:13px;color:var(--grey-600);">
+              Raum: ${escapeHtml(parsed.raum)} · Messgrösse: ${escapeHtml(parsed.label)}<br>
+              ${parsed.dailyAverages.length} Tage übernommen, ${parsed.skippedDays} Tage übersprungen (unvollständig, &lt; ${MIN_ROWS_PER_DAY} Messungen) von ${parsed.totalDays} Tagen insgesamt.
+            </span>
+          </div>
+        `);
+      }catch(e){
+        summaries.push(`<div class="msg err">${escapeHtml(file.name)}: ${escapeHtml(e.message)}</div>`);
+      }
+
+      uploadResults.innerHTML = summaries.join('');
+    }
+
+    uploadResults.innerHTML = summaries.join('');
+    showMsg(uploadMsg, 'Upload abgeschlossen.', 'ok');
+    cacheInvalidate('param:');
+    cacheInvalidate('eve:');
+  }catch(e){
+    showMsg(uploadMsg, 'Fehler: ' + e.message, 'err');
+  }
 });
 
 /* ===================== SKODA UPLOAD ===================== */
